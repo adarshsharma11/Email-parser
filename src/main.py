@@ -1,0 +1,246 @@
+"""
+Main orchestrator for the Vacation Rental Booking Automation system.
+"""
+import click
+from typing import Optional, List
+from datetime import datetime
+
+from .email_reader.gmail_client import GmailClient
+from .booking_parser.parser import BookingParser
+from .firebase_sync.firestore_client import FirestoreClient
+from .utils.models import EmailData, BookingData, Platform, ProcessingResult, SyncResult
+from .utils.logger import setup_logger, BookingLogger
+from config.settings import app_config
+
+
+class BookingAutomation:
+    """Main orchestrator for vacation rental booking automation."""
+    
+    def __init__(self, log_level: str = "INFO", log_file: Optional[str] = None):
+        self.logger = setup_logger("booking_automation", log_level, log_file)
+        self.booking_logger = BookingLogger(self.logger)
+        
+        # Initialize components
+        self.gmail_client = GmailClient()
+        self.booking_parser = BookingParser()
+        self.firestore_client = FirestoreClient()
+    
+    def process_emails(
+        self,
+        platform: Optional[Platform] = None,
+        since_days: Optional[int] = None,
+        limit: Optional[int] = None,
+        dry_run: bool = False
+    ) -> dict:
+        """
+        Main method to process emails and sync bookings.
+        
+        Args:
+            platform: Specific platform to process
+            since_days: Number of days to look back
+            limit: Maximum number of emails to process
+            dry_run: If True, don't actually sync to Firestore
+            
+        Returns:
+            Dictionary with processing results
+        """
+        try:
+            self.logger.info("Starting email processing",
+                           platform=platform.value if platform else "all",
+                           since_days=since_days,
+                           limit=limit,
+                           dry_run=dry_run)
+            
+            # Connect to Gmail
+            if not self.gmail_client.connect():
+                raise Exception("Failed to connect to Gmail")
+            
+            # Fetch emails
+            emails = self.gmail_client.fetch_emails(platform, since_days, limit)
+            
+            if not emails:
+                self.logger.info("No emails found matching criteria")
+                return self._get_empty_results()
+            
+            self.logger.info(f"Found {len(emails)} emails to process")
+            
+            # Process each email
+            successful_bookings = []
+            failed_emails = []
+            
+            for email_data in emails:
+                try:
+                    # Log email processing
+                    platform_name = email_data.platform.value if email_data.platform else "unknown"
+                    self.booking_logger.log_email_processed(platform_name, email_data.email_id)
+                    
+                    # Parse email
+                    parse_result = self.booking_parser.parse_email(email_data)
+                    
+                    if parse_result.success and parse_result.booking_data:
+                        self.booking_logger.log_booking_parsed(parse_result.booking_data.to_dict())
+                        successful_bookings.append(parse_result.booking_data)
+                    else:
+                        failed_emails.append({
+                            'email_id': email_data.email_id,
+                            'error': parse_result.error_message,
+                            'platform': platform_name
+                        })
+                        self.booking_logger.log_error(
+                            Exception(parse_result.error_message),
+                            f"Email parsing failed: {email_data.email_id}"
+                        )
+                
+                except Exception as e:
+                    failed_emails.append({
+                        'email_id': email_data.email_id,
+                        'error': str(e),
+                        'platform': email_data.platform.value if email_data.platform else "unknown"
+                    })
+                    self.booking_logger.log_error(e, f"Email processing failed: {email_data.email_id}")
+            
+            # Sync bookings to Firestore
+            sync_results = []
+            if successful_bookings and not dry_run:
+                sync_results = self.firestore_client.sync_bookings(successful_bookings, dry_run)
+                
+                for i, sync_result in enumerate(sync_results):
+                    if sync_result.success:
+                        if sync_result.is_new:
+                            self.booking_logger.log_new_booking(successful_bookings[i].to_dict())
+                        else:
+                            self.booking_logger.log_duplicate_booking(
+                                sync_result.reservation_id,
+                                successful_bookings[i].platform.value
+                            )
+                    else:
+                        self.booking_logger.log_error(
+                            Exception(sync_result.error_message),
+                            f"Firestore sync failed: {sync_result.reservation_id}"
+                        )
+            
+            # Mark emails as read (only if not dry run)
+            if not dry_run:
+                for email_data in emails:
+                    self.gmail_client.mark_as_read(email_data.email_id)
+            
+            # Disconnect from Gmail
+            self.gmail_client.disconnect()
+            
+            # Print summary
+            self.booking_logger.print_summary()
+            
+            return {
+                'emails_processed': len(emails),
+                'bookings_parsed': len(successful_bookings),
+                'new_bookings': len([r for r in sync_results if r.success and r.is_new]),
+                'duplicate_bookings': len([r for r in sync_results if r.success and not r.is_new]),
+                'failed_emails': failed_emails,
+                'sync_errors': [r for r in sync_results if not r.success],
+                'dry_run': dry_run
+            }
+            
+        except Exception as e:
+            self.logger.error("Error in email processing", error=str(e))
+            self.booking_logger.log_error(e, "Main processing error")
+            return {'error': str(e)}
+    
+    def get_booking_stats(self) -> dict:
+        """Get booking statistics from Firestore."""
+        try:
+            stats = self.firestore_client.get_booking_stats()
+            self.logger.info("Retrieved booking statistics", stats=stats)
+            return stats
+        except Exception as e:
+            self.logger.error("Error getting booking statistics", error=str(e))
+            return {'error': str(e)}
+    
+    def _get_empty_results(self) -> dict:
+        """Return empty results structure."""
+        return {
+            'emails_processed': 0,
+            'bookings_parsed': 0,
+            'new_bookings': 0,
+            'duplicate_bookings': 0,
+            'failed_emails': [],
+            'sync_errors': [],
+            'dry_run': False
+        }
+
+
+@click.command()
+@click.option('--platform', type=click.Choice(['vrbo', 'airbnb', 'booking']), 
+              help='Specific platform to process')
+@click.option('--since-days', type=int, 
+              help='Number of days to look back for emails')
+@click.option('--limit', type=int, 
+              help='Maximum number of emails to process')
+@click.option('--dry-run', is_flag=True, 
+              help='Run without actually syncing to Firestore')
+@click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), 
+              default='INFO', help='Logging level')
+@click.option('--log-file', type=str, 
+              help='Log file path (optional)')
+@click.option('--stats', is_flag=True, 
+              help='Show booking statistics only')
+def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
+    """
+    Vacation Rental Booking Automation System.
+    
+    Automatically extracts booking data from vacation rental platform emails
+    and syncs them to Firebase Firestore.
+    """
+    try:
+        # Initialize automation system
+        automation = BookingAutomation(log_level, log_file)
+        
+        if stats:
+            # Show statistics only
+            stats_data = automation.get_booking_stats()
+            if 'error' in stats_data:
+                click.echo(f"Error: {stats_data['error']}")
+                return 1
+            
+            click.echo("Booking Statistics:")
+            click.echo(f"Total bookings: {stats_data.get('total_bookings', 0)}")
+            for platform_name, count in stats_data.get('by_platform', {}).items():
+                click.echo(f"  {platform_name}: {count}")
+            return 0
+        
+        # Process emails
+        platform_enum = None
+        if platform:
+            platform_enum = Platform(platform)
+        
+        results = automation.process_emails(
+            platform=platform_enum,
+            since_days=since_days,
+            limit=limit,
+            dry_run=dry_run
+        )
+        
+        if 'error' in results:
+            click.echo(f"Error: {results['error']}")
+            return 1
+        
+        # Print results
+        click.echo(f"\nProcessing completed:")
+        click.echo(f"  Emails processed: {results['emails_processed']}")
+        click.echo(f"  Bookings parsed: {results['bookings_parsed']}")
+        click.echo(f"  New bookings: {results['new_bookings']}")
+        click.echo(f"  Duplicate bookings: {results['duplicate_bookings']}")
+        click.echo(f"  Failed emails: {len(results['failed_emails'])}")
+        click.echo(f"  Sync errors: {len(results['sync_errors'])}")
+        
+        if dry_run:
+            click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to Firestore")
+        
+        return 0
+        
+    except Exception as e:
+        click.echo(f"Fatal error: {str(e)}")
+        return 1
+
+
+if __name__ == "__main__":
+    main()
