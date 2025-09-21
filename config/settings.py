@@ -79,6 +79,9 @@ class AppConfig:
     # Date formats for different platforms
     date_formats: Dict[str, str] = None
     
+    # RAG and LLM settings
+    rag_cache_ttl_hours: int = int(os.getenv("RAG_CACHE_TTL_HOURS", "24"))
+    
     def __post_init__(self):
         if self.date_formats is None:
             self.date_formats = {

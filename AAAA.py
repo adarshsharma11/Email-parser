@@ -1,99 +1,115 @@
 #!/usr/bin/env python3
 """
-gmail_probe.py — quick tester with keyword CONTEXT
-- Edit SEARCH_KEYWORD / SEARCH_FROM / LIMIT below.
-- Uses your existing GmailClient, which reads creds from config.settings (.env).
-- Prints From/Subject/Date and up to a few snippets around each match.
+gmail_firebase_probe.py — Quick Gmail → Firestore test
+
+- Connects to Gmail using GmailClient (config/.env)
+- Prints a few recent emails with keyword context windows
+- Writes up to 50 emails into Firestore (collection "Alon-test")
 """
 
 import re
 from pathlib import Path
+from typing import Any
+from dotenv import load_dotenv
 
-# --- EDIT THESE ---
-SEARCH_KEYWORD = "booking"   # word or phrase to find (case-insensitive)
-SEARCH_FROM    = ""          # e.g. "booking.com" or "sender@domain.com" ; "" = any sender
-LIMIT          = 5           # how many emails to print
-SNIPPET_CHARS  = 90          # characters before/after each match to show
-MAX_HITS_PER_EMAIL = 3       # max snippets per email
-# ------------------
+# === CONFIG ===
+SEARCH_KEYWORD = "booking"   # word to highlight in console output
+SEARCH_FROM    = ""          # e.g. "booking.com"; "" = any sender
+PRINT_LIMIT    = 5           # how many to show in console
+FIRESTORE_LIMIT = 50         # how many to write to Firestore
+SNIPPET_CHARS  = 90
+MAX_HITS_PER_EMAIL = 3
+# ==============
 
-# force-load .env from project root so config.settings picks it up reliably
-try:
-    from dotenv import load_dotenv
-    env_path = Path(__file__).resolve().parents[0] / ".env"
-    # If your .env is at project root (one level up), switch to parents[1]
-    if not env_path.exists():
-        env_path = Path(__file__).resolve().parents[1] / ".env"
-    load_dotenv(dotenv_path=env_path, override=False)
-except Exception:
-    pass  # it's fine; config.settings also calls load_dotenv()
+# Load .env explicitly
+env_path = Path(__file__).resolve().parent / ".env"
+if not env_path.exists():
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=env_path, override=False)
 
 
 def strip_html(html: str) -> str:
-    """Very light HTML to text (enough for snippet searching)."""
     if not html:
         return ""
-    # Remove scripts/styles
-    html = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", html)
-    # Replace breaks and paragraphs with newlines
-    html = re.sub(r"(?i)<br\s*/?>", "\n", html)
+    html = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", html)
+    html = re.sub(r"(?i)<br\\s*/?>", "\n", html)
     html = re.sub(r"(?i)</p>", "\n", html)
-    # Drop all other tags
     html = re.sub(r"(?s)<.*?>", " ", html)
-    # Collapse whitespace
-    return re.sub(r"\s+", " ", html).strip()
+    return re.sub(r"\\s+", " ", html).strip()
 
 
-def extract_contexts(text: str, needle: str, window: int = 90, max_hits: int = 3):
-    """
-    Return up to `max_hits` snippets like: '... <context-before> [MATCH] <context-after> ...'
-    Case-insensitive. Shows `window` chars on each side.
-    """
-    if not text or not needle:
-        return []
-    snippets = []
-    pattern = re.compile(re.escape(needle), flags=re.IGNORECASE)
-    for m in pattern.finditer(text):
-        start = max(0, m.start() - window)
-        end   = min(len(text), m.end() + window)
-        left  = text[start:m.start()].strip()
-        match = text[m.start():m.end()]
-        right = text[m.end():end].strip()
-        snippet = f"... {left} \x1b[1m{match}\x1b[0m {right} ..."
-        # remove excessive whitespace
-        snippet = re.sub(r"\s+", " ", snippet)
-        snippets.append(snippet)
-        if len(snippets) >= max_hits:
-            break
-    return snippets
-
-
-def compact_line(s: str, limit: int = 220) -> str:
-    s = (s or "").strip()
-    s = re.sub(r"\s+", " ", s)
+def compact(s: str, limit: int = 240) -> str:
+    s = re.sub(r"\\s+", " ", (s or "").strip())
     return (s[:limit] + "…") if len(s) > limit else s
 
 
-def main():
-    # Import your client + config
+def highlight_matches(text: str, keyword: str, window: int, max_hits: int):
+    if not text or not keyword:
+        return []
+    out, pat = [], re.compile(re.escape(keyword), re.IGNORECASE)
+    for m in pat.finditer(text):
+        start, end = max(0, m.start() - window), min(len(text), m.end() + window)
+        left, mid, right = text[start:m.start()].strip(), m.group(), text[m.end():end].strip()
+        out.append(f"... {left} \x1b[1m{mid}\x1b[0m {right} ...")
+        if len(out) >= max_hits:
+            break
+    return out
+
+
+def write_bulk_emails(client: Any, max_total: int):
+    """Dump up to max_total emails into Firestore collection 'Alon-test'."""
+    from firebase_admin import credentials, firestore, initialize_app, get_app
+    from config.settings import firebase_config
+
+    # Init Firestore
+    cred_dict = firebase_config.get_credentials_dict()
     try:
-        from src.email_reader.gmail_client import GmailClient
-        from config.settings import gmail_config
-    except Exception as e:
-        print(f"❌ Import error: {e}")
-        print("Check your import paths. If your project layout differs, adjust the imports.")
+        app = get_app()
+    except Exception:
+        app = initialize_app(credentials.Certificate(cred_dict))
+    db = firestore.client()
+
+    client.connection.select("INBOX")
+    status, data = client.connection.search(None, "ALL")
+    if status != "OK":
+        print(f"❌ Bulk search failed: {status} {data}")
         return
 
-    # Show which account we're using
-    print(f"Using Gmail: {gmail_config.email or '<EMPTY>'}")
+    ids = list(reversed(data[0].split()))[:max_total]
+    print(f"Writing {len(ids)} emails → Firestore 'Alon-test'")
 
+    for eid in ids:
+        eid_str = eid.decode() if isinstance(eid, (bytes, bytearray)) else str(eid)
+        ed = client.fetch_email(eid_str)
+        if not ed:
+            continue
+
+        body = ed.body_text or strip_html(ed.body_html) or ""
+        doc = {
+            "subject": ed.subject,
+            "sender": ed.sender,
+            "date": ed.date,
+            "snippet": compact(body, 300),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+
+        db.collection("Alon-test").document(eid_str).set(doc, merge=True)
+
+    print("✅ Bulk write done")
+
+
+def main():
+    from src.email_reader.gmail_client import GmailClient
+    from config.settings import gmail_config
+
+    print(f"Using Gmail: {gmail_config.email or '<EMPTY>'}")
     client = GmailClient()
     if not client.connect():
-        print("❌ Failed to connect. Verify your .env (GMAIL_EMAIL / GMAIL_PASSWORD) and IMAP app password (no spaces).")
+        print("❌ Failed to connect. Check .env and app password (no spaces).")
         return
 
     try:
-        # IMAP search using FROM/TEXT so we can control sender & keyword
+        # Console print of a few emails
         client.connection.select("INBOX")
         criteria = []
         if SEARCH_FROM:
@@ -103,44 +119,26 @@ def main():
         search_query = " ".join(criteria) if criteria else "ALL"
 
         status, data = client.connection.search(None, search_query)
-        if status != "OK":
-            print(f"❌ Search failed: {status} {data}")
-            return
+        if status == "OK":
+            ids = list(reversed(data[0].split()))[:PRINT_LIMIT]
+            print(f"\n✅ Showing {len(ids)} messages for query → {search_query}\n")
+            for idx, eid in enumerate(ids, 1):
+                eid_str = eid.decode() if isinstance(eid, (bytes, bytearray)) else str(eid)
+                ed = client.fetch_email(eid_str)
+                if not ed:
+                    continue
+                body = ed.body_text or strip_html(ed.body_html) or ""
+                windows = highlight_matches(body, SEARCH_KEYWORD, SNIPPET_CHARS, MAX_HITS_PER_EMAIL)
+                print("─" * 72)
+                print(f"From:    {compact(ed.sender)}")
+                print(f"Subject: {compact(ed.subject)}")
+                print(f"Date:    {ed.date}\n")
+                for j, w in enumerate(windows or [compact(body)], 1):
+                    print(f"[{j}] {w}")
+            print("─" * 72)
 
-        ids = list(reversed(data[0].split()))[:LIMIT]
-        if not ids:
-            print(f"No matches for query: {search_query}")
-            return
-
-        print(f"✅ Found {len(ids)} messages for query: {search_query}\n")
-
-        for i, eid in enumerate(ids, 1):
-            eid_str = eid.decode() if isinstance(eid, (bytes, bytearray)) else str(eid)
-            ed = client.fetch_email(eid_str)
-            if not ed:
-                print(f"[{i}] (failed to fetch id={eid_str})")
-                continue
-
-            # Assemble a searchable body
-            body_text = ed.body_text or ""
-            if not body_text and ed.body_html:
-                body_text = strip_html(ed.body_html)
-
-            contexts = extract_contexts(body_text, SEARCH_KEYWORD, window=SNIPPET_CHARS, max_hits=MAX_HITS_PER_EMAIL)
-
-            print("-" * 80)
-            print(f"[{i}] From:    {compact_line(ed.sender)}")
-            print(f"     Subject: {compact_line(ed.subject)}")
-            print(f"     Date:    {ed.date}")
-            if contexts:
-                print(f"     Matches ({len(contexts)}):")
-                for j, snip in enumerate(contexts, 1):
-                    # strip ANSI if your terminal doesn't support bold:
-                    # snip = snip.replace("\x1b[1m", "").replace("\x1b[0m", "")
-                    print(f"       {j}. {snip}")
-            else:
-                # fallback: short snippet of the body
-                print(f"     Snippet: {compact_line(body_text)}")
+        # Bulk write to Firestore
+        write_bulk_emails(client, FIRESTORE_LIMIT)
 
     finally:
         client.disconnect()
