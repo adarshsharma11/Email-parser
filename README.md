@@ -1,12 +1,12 @@
 # Vacation Rental Booking Automation
 
-A production-ready Python system that automatically extracts vacation rental booking data from Gmail inboxes and syncs it to Firebase Firestore. The system supports multiple platforms including Vrbo, Airbnb, and Booking.com.
+A production-ready Python system that automatically extracts vacation rental booking data from Gmail inboxes and syncs it to Supabase (Postgres). The system supports multiple platforms including Vrbo, Airbnb, and Booking.com.
 
 ## Features
 
 - **Email Reader**: Connects to Gmail via IMAP to fetch booking confirmation emails
 - **Booking Parser**: Extracts structured data from emails using HTML parsing and regex
-- **Firebase Sync**: Uploads bookings to Firestore with duplicate detection
+- **Supabase Sync**: Uploads bookings to Supabase with duplicate detection
 - **CLI Interface**: Command-line tool with various options for processing
 - **Comprehensive Logging**: Colorized logging with detailed processing summaries
 - **Testing**: Full unit test coverage with mocks for external services
@@ -19,7 +19,7 @@ The system is built with a modular architecture:
 src/
 ├── email_reader/          # Gmail IMAP client
 ├── booking_parser/        # Email parsing and data extraction
-├── firebase_sync/         # Firestore integration
+├── supabase_sync/         # Supabase integration
 ├── utils/                 # Shared utilities, models, and logging
 └── main.py               # Main orchestrator and CLI
 
@@ -33,8 +33,7 @@ tests/                    # Unit tests for all components
 
 - Python 3.8+
 - Gmail account with IMAP enabled
-- Firebase project with Firestore enabled
-- Firebase service account credentials
+- Supabase project and API keys
 
 ## Installation
 
@@ -73,17 +72,37 @@ tests/                    # Unit tests for all components
    GMAIL_PASSWORD=your-app-password
    ```
 
-### Firebase Setup
+### Supabase Setup
 
-1. Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
-2. Enable Firestore Database
-3. Create a service account and download the JSON key
-4. Add Firebase credentials to `.env`:
+1. Create a project at https://supabase.com/
+2. In Project Settings > API, copy:
+   - Project URL (SUPABASE_URL)
+   - anon key (SUPABASE_ANON_KEY)
+   - service_role key (SUPABASE_SERVICE_ROLE_KEY) – keep this secret
+3. Create a table `bookings` with (recommended) columns:
+   - reservation_id (text, primary key)
+   - platform (text)
+   - guest_name (text)
+   - guest_phone (text, nullable)
+   - guest_email (text, nullable)
+   - check_in_date (timestamptz, nullable)
+   - check_out_date (timestamptz, nullable)
+   - property_id (text, nullable)
+   - property_name (text, nullable)
+   - number_of_guests (int4, nullable)
+   - total_amount (float8, nullable)
+   - currency (text, nullable)
+   - booking_date (timestamptz, nullable)
+   - email_id (text, nullable)
+   - created_at (timestamptz, default now())
+   - updated_at (timestamptz, default now())
+   - raw_data (jsonb, nullable)
+4. Configure RLS policies. For development, you can disable RLS or allow the service role full access.
+5. Add Supabase credentials to `.env`:
    ```
-   FIREBASE_PROJECT_ID=your-project-id
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
-   FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
-   # ... other Firebase credentials
+   SUPABASE_URL=https://your-project-id.supabase.co
+   SUPABASE_ANON_KEY=...
+   SUPABASE_SERVICE_ROLE_KEY=...
    ```
 
 ## Usage
@@ -107,7 +126,7 @@ python run.py --since-days 30
 # Limit number of emails to process
 python run.py --limit 50
 
-# Dry run (don't sync to Firestore)
+# Dry run (don't sync to Supabase)
 python run.py --dry-run
 
 # Show booking statistics
@@ -148,22 +167,29 @@ The system extracts the following data from booking emails:
 - **Platform Information**: Source platform (Vrbo, Airbnb, Booking.com)
 - **Metadata**: Number of guests, email timestamp
 
-### Firestore Structure
+### Supabase Structure
 
 ```
-bookings/
-├── {reservation_id}/
-│   ├── guest_name: string
-│   ├── guest_phone: string
-│   ├── check_in_date: timestamp
-│   ├── check_out_date: timestamp
-│   ├── reservation_id: string
-│   ├── property_id: string
-│   ├── platform: string
-│   ├── num_guests: number
-│   ├── email_id: string
-│   ├── created_at: timestamp
-│   └── updated_at: timestamp
+bookings (table)
+| column            | type        |
+|-------------------|-------------|
+| reservation_id PK | text        |
+| platform          | text        |
+| guest_name        | text        |
+| guest_phone       | text        |
+| guest_email       | text        |
+| check_in_date     | timestamptz |
+| check_out_date    | timestamptz |
+| property_id       | text        |
+| property_name     | text        |
+| number_of_guests  | int4        |
+| total_amount      | float8      |
+| currency          | text        |
+| booking_date      | timestamptz |
+| email_id          | text        |
+| created_at        | timestamptz |
+| updated_at        | timestamptz |
+| raw_data          | jsonb       |
 ```
 
 ## Testing
@@ -230,7 +256,7 @@ The system handles various error scenarios:
 
 - **Gmail Connection Issues**: Automatic retry with exponential backoff
 - **Email Parsing Failures**: Graceful degradation with detailed error reporting
-- **Firestore Sync Errors**: Duplicate detection and conflict resolution
+- **Database Sync Errors**: Duplicate detection and conflict resolution
 - **Network Issues**: Connection timeouts and retry logic
 
 ## Production Deployment
@@ -243,9 +269,9 @@ Set these in your production environment:
 # Required
 GMAIL_EMAIL=your-email@gmail.com
 GMAIL_PASSWORD=your-app-password
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
-FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 
 # Optional
 LOG_LEVEL=INFO
@@ -274,10 +300,10 @@ Set up a cron job to run the system regularly:
    - Check if using App Password instead of regular password
    - Ensure 2FA is properly configured
 
-2. **Firebase Authentication Error**
-   - Verify service account credentials in `.env`
-   - Check if Firestore is enabled in Firebase project
-   - Ensure proper permissions for the service account
+2. **Supabase Authentication Error**
+   - Verify URL and keys in `.env`
+   - Ensure RLS policy allows access for the service role
+   - Confirm table names/columns match expectations
 
 3. **Email Parsing Issues**
    - Check if email format has changed

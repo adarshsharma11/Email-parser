@@ -7,8 +7,11 @@ from dataclasses import dataclass
 import structlog
 
 from ..utils.logger import get_logger
-from ..firebase_sync.firestore_client import FirestoreClient
-from config.settings import app_config
+from config.settings import app_config, supabase_config
+try:
+    from supabase import create_client  # type: ignore
+except Exception:  # pragma: no cover
+    create_client = None  # type: ignore
 
 
 @dataclass
@@ -26,18 +29,17 @@ class RAGDataManager:
         self.logger = get_logger("rag_data")
         self.cache_ttl_hours = cache_ttl_hours
         self.cache: Dict[str, CacheEntry] = {}
-        self.firestore_client: Optional[FirestoreClient] = None
+        self.supabase = None
         
-        # Initialize Firestore client if available and ensure it's initialized
+        # Initialize Supabase client if available
         try:
-            self.firestore_client = FirestoreClient()
-            try:
-                # Attempt to initialize the client (sets .db)
-                self.firestore_client.initialize()
-            except Exception as ie:
-                self.logger.warning("Failed to initialize Firestore client", error=str(ie))
+            if not supabase_config.url or not supabase_config.get_auth_key():
+                raise RuntimeError("Supabase configuration missing")
+            if create_client is None:
+                raise RuntimeError("supabase package not installed")
+            self.supabase = create_client(supabase_config.url, supabase_config.get_auth_key())
         except Exception as e:
-            self.logger.warning("Firestore client not available, using empty data", error=str(e))
+            self.logger.warning("Supabase client not available, using empty data", error=str(e))
     
     def _is_cache_valid(self, cache_key: str) -> bool:
         """Check if cache entry is still valid."""
@@ -47,33 +49,26 @@ class RAGDataManager:
         entry = self.cache[cache_key]
         return (time.time() - entry.timestamp) < entry.ttl
     
-    def _load_from_firestore(self, collection_name: str) -> List[Dict]:
-        """Load data from Firestore collection."""
-        if not self.firestore_client:
-            self.logger.warning(f"Firestore not available, returning empty {collection_name}")
+    def _load_from_supabase(self, table_name: str) -> List[Dict]:
+        """Load data from a Supabase table."""
+        if not self.supabase:
+            self.logger.warning(f"Supabase not available, returning empty {table_name}")
             return []
-        
         try:
-            # Get all documents from the collection
-            collection_ref = self.firestore_client.db.collection(collection_name)
-            docs = collection_ref.stream()
-            
-            data = []
-            for doc in docs:
-                doc_data = doc.to_dict()
-                doc_data['_id'] = doc.id  # Add document ID
-                data.append(doc_data)
-            
-            self.logger.info(f"Loaded {len(data)} records from {collection_name}")
-            return data
-            
+            res = self.supabase.table(table_name).select("*").execute()
+            rows = getattr(res, "data", []) or getattr(res, "json", {}).get("data", [])
+            # Ensure an _id exists for compatibility with downstream formatting
+            for idx, row in enumerate(rows):
+                row.setdefault("_id", row.get("id", str(idx)))
+            self.logger.info(f"Loaded {len(rows)} records from {table_name}")
+            return rows
         except Exception as e:
-            self.logger.error(f"Error loading {collection_name} from Firestore", error=str(e))
+            self.logger.error(f"Error loading {table_name} from Supabase", error=str(e))
             return []
     
     def load_constants(self, force_refresh: bool = False) -> Dict[str, List[Dict]]:
         """
-        Load and cache constant data from Firestore.
+    Load and cache constant data from Supabase.
         
         Args:
             force_refresh: If True, bypass cache and reload from Firestore
@@ -93,8 +88,8 @@ class RAGDataManager:
                 self.logger.debug(f"Using cached {collection} data")
                 continue
             
-            # Load from Firestore
-            data = self._load_from_firestore(collection)
+            # Load from Supabase
+            data = self._load_from_supabase(collection)
             
             # Cache the result
             self.cache[cache_key] = CacheEntry(
@@ -200,7 +195,7 @@ def get_rag_manager() -> RAGDataManager:
 
 
 def load_constants(force_refresh: bool = False) -> Dict[str, List[Dict]]:
-    """Load constant data from cache or Firestore."""
+    """Load constant data from cache or Supabase."""
     return get_rag_manager().load_constants(force_refresh)
 
 

@@ -7,7 +7,8 @@ from datetime import datetime
 
 from .email_reader.gmail_client import GmailClient
 from .booking_parser.parser import BookingParser
-from .firebase_sync.firestore_client import FirestoreClient
+# Use Supabase client under the FirestoreClient alias to keep interface stable
+from .supabase_sync.supabase_client import SupabaseClient as FirestoreClient
 from .utils.models import EmailData, BookingData, Platform, ProcessingResult, SyncResult
 from .utils.logger import setup_logger, BookingLogger
 from config.settings import app_config
@@ -39,7 +40,7 @@ class BookingAutomation:
             platform: Specific platform to process
             since_days: Number of days to look back
             limit: Maximum number of emails to process
-            dry_run: If True, don't actually sync to Firestore
+            dry_run: If True, don't actually write to the database
             
         Returns:
             Dictionary with processing results
@@ -99,7 +100,7 @@ class BookingAutomation:
                     })
                     self.booking_logger.log_error(e, f"Email processing failed: {email_data.email_id}")
             
-            # Sync bookings to Firestore
+            # Sync bookings to database
             sync_results = []
             if successful_bookings and not dry_run:
                 sync_results = self.firestore_client.sync_bookings(successful_bookings, dry_run)
@@ -116,7 +117,7 @@ class BookingAutomation:
                     else:
                         self.booking_logger.log_error(
                             Exception(sync_result.error_message),
-                            f"Firestore sync failed: {sync_result.reservation_id}"
+                            f"Database sync failed: {sync_result.reservation_id}"
                         )
             
             # Mark emails as read (only if not dry run)
@@ -146,7 +147,7 @@ class BookingAutomation:
             return {'error': str(e)}
     
     def get_booking_stats(self) -> dict:
-        """Get booking statistics from Firestore."""
+        """Get booking statistics from the database."""
         try:
             stats = self.firestore_client.get_booking_stats()
             self.logger.info("Retrieved booking statistics", stats=stats)
@@ -176,7 +177,7 @@ class BookingAutomation:
 @click.option('--limit', type=int, 
               help='Maximum number of emails to process')
 @click.option('--dry-run', is_flag=True, 
-              help='Run without actually syncing to Firestore')
+              help='Run without actually syncing to the database')
 @click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), 
               default='INFO', help='Logging level')
 @click.option('--log-file', type=str, 
@@ -188,7 +189,7 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
     Vacation Rental Booking Automation System.
     
     Automatically extracts booking data from vacation rental platform emails
-    and syncs them to Firebase Firestore.
+    and syncs them to Supabase.
     """
     try:
         # Initialize automation system
@@ -199,7 +200,7 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
             stats_data = automation.get_booking_stats()
             if 'error' in stats_data:
                 click.echo(f"Error: {stats_data['error']}")
-                return 1
+                click.get_current_context().exit(1)
             
             click.echo("Booking Statistics:")
             click.echo(f"Total bookings: {stats_data.get('total_bookings', 0)}")
@@ -221,7 +222,7 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
         
         if 'error' in results:
             click.echo(f"Error: {results['error']}")
-            return 1
+            click.get_current_context().exit(1)
         
         # Print results
         click.echo(f"\nProcessing completed:")
@@ -233,13 +234,13 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
         click.echo(f"  Sync errors: {len(results['sync_errors'])}")
         
         if dry_run:
-            click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to Firestore")
+            click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to database")
         
         return 0
         
     except Exception as e:
         click.echo(f"Fatal error: {str(e)}")
-        return 1
+        click.get_current_context().exit(1)
 
 
 if __name__ == "__main__":

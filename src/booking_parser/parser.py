@@ -283,7 +283,7 @@ class BookingParser:
             
             # Look for dates in specific HTML elements
             date_elements = soup.find_all(['span', 'div', 'td'], 
-                                        text=re.compile(r'Check-in|Check-out|Arrival|Departure'))
+                                        string=re.compile(r'Check-in|Check-out|Arrival|Departure'))
             
             for element in date_elements:
                 text = element.get_text()

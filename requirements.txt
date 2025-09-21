@@ -1,5 +1,7 @@
 # Core dependencies
-firebase-admin==6.2.0
+# Upgrade supabase to reduce pydantic v2 deprecation warnings
+supabase==2.7.4
+gotrue>=2.10.0
 python-dotenv==1.0.0
 colorama==0.4.6
 click==8.1.7

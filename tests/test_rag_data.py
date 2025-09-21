@@ -17,35 +17,37 @@ class TestRAGDataManager:
     """Test cases for RAGDataManager class."""
     
     @pytest.fixture
-    def mock_firestore(self):
-        """Mock Firestore client."""
-        with patch('src.rag.rag_data.FirestoreClient') as mock_client:
+    def mock_supabase(self):
+        """Mock Supabase client creation and instance."""
+        with patch('src.rag.rag_data.create_client') as mock_create:
             mock_instance = Mock()
-            mock_client.return_value = mock_instance
+            mock_create.return_value = mock_instance
+            # Ensure supabase_config has values so initialization succeeds
+            from src.rag.rag_data import supabase_config
+            supabase_config.url = 'http://localhost'
+            supabase_config.service_role_key = 'service-role'
+            supabase_config.anon_key = 'anon'
             yield mock_instance
     
     @pytest.fixture
-    def rag_manager(self, mock_firestore):
+    def rag_manager(self, mock_supabase):
         """Create RAGDataManager instance for testing."""
         return RAGDataManager(cache_ttl_hours=1)
     
-    def test_initialization_with_firestore(self, mock_firestore):
-        """Test RAGDataManager initialization with Firestore available."""
+    def test_initialization_with_supabase(self, mock_supabase):
+        """Test RAGDataManager initialization with Supabase available."""
         manager = RAGDataManager()
-        assert manager.firestore_client is not None
+        assert manager.supabase is not None
     
-    def test_initialization_without_firestore(self):
-        """Test RAGDataManager initialization without Firestore."""
-        with patch('src.rag.rag_data.FirestoreClient', side_effect=Exception("No Firestore")):
+    def test_initialization_without_supabase(self):
+        """Test RAGDataManager initialization without Supabase."""
+        with patch('src.rag.rag_data.create_client', side_effect=Exception("No Supabase")):
             manager = RAGDataManager()
-            assert manager.firestore_client is None
+            assert manager.supabase is None
     
-    def test_load_constants_empty_firestore(self, rag_manager, mock_firestore):
-        """Test loading constants when Firestore is empty."""
-        # Mock empty collections
-        mock_collection = Mock()
-        mock_firestore.db.collection.return_value = mock_collection
-        mock_collection.stream.return_value = []
+    def test_load_constants_empty(self, rag_manager, mock_supabase):
+        """Test loading constants when Supabase returns empty tables."""
+        mock_supabase.table.return_value.select.return_value.execute.return_value = Mock(data=[])
         
         result = rag_manager.load_constants()
         
@@ -53,22 +55,18 @@ class TestRAGDataManager:
         assert result['recs'] == []
         assert result['rules'] == []
     
-    def test_load_constants_with_data(self, rag_manager, mock_firestore):
-        """Test loading constants with actual data."""
-        # Mock collection with data
-        mock_collection = Mock()
-        mock_firestore.db.collection.return_value = mock_collection
-        
-        # Mock documents
-        mock_doc1 = Mock()
-        mock_doc1.id = "doc1"
-        mock_doc1.to_dict.return_value = {"name": "Vendor 1", "type": "cleaning"}
-        
-        mock_doc2 = Mock()
-        mock_doc2.id = "doc2"
-        mock_doc2.to_dict.return_value = {"title": "Rule 1", "content": "Always clean"}
-        
-        mock_collection.stream.return_value = [mock_doc1, mock_doc2]
+    def test_load_constants_with_data(self, rag_manager, mock_supabase):
+        """Test loading constants with actual data from Supabase."""
+        # Mock responses for 3 tables
+        def make_resp(data):
+            m = Mock()
+            m.data = data
+            return m
+        mock_supabase.table.return_value.select.return_value.execute.side_effect = [
+            make_resp([{"id": "doc1", "name": "Vendor 1", "type": "cleaning"}, {"id": "doc2", "title": "Rule 1", "content": "Always clean"}]),
+            make_resp([{"id": "doc1", "name": "Vendor 1", "type": "cleaning"}, {"id": "doc2", "title": "Rule 1", "content": "Always clean"}]),
+            make_resp([{"id": "doc1", "name": "Vendor 1", "type": "cleaning"}, {"id": "doc2", "title": "Rule 1", "content": "Always clean"}]),
+        ]
         
         result = rag_manager.load_constants()
         
@@ -76,14 +74,12 @@ class TestRAGDataManager:
         assert len(result['recs']) == 2
         assert len(result['rules']) == 2
     
-    def test_cache_functionality(self, rag_manager, mock_firestore):
+    def test_cache_functionality(self, rag_manager, mock_supabase):
         """Test that caching works correctly."""
         # Mock empty collections
-        mock_collection = Mock()
-        mock_firestore.db.collection.return_value = mock_collection
-        mock_collection.stream.return_value = []
+        mock_supabase.table.return_value.select.return_value.execute.return_value = Mock(data=[])
         
-        # First call should hit Firestore
+    # First call should hit Supabase
         result1 = rag_manager.load_constants()
         
         # Second call should use cache
@@ -92,14 +88,12 @@ class TestRAGDataManager:
         # Both should be the same
         assert result1 == result2
         
-        # Firestore should only be called once per collection
-        assert mock_collection.stream.call_count == 3  # vendors, recs, rules
+    # Supabase should only be called once per collection
+        assert mock_supabase.table.return_value.select.return_value.execute.call_count == 3
     
-    def test_force_refresh_bypasses_cache(self, rag_manager, mock_firestore):
+    def test_force_refresh_bypasses_cache(self, rag_manager, mock_supabase):
         """Test that force_refresh bypasses cache."""
-        mock_collection = Mock()
-        mock_firestore.db.collection.return_value = mock_collection
-        mock_collection.stream.return_value = []
+        mock_supabase.table.return_value.select.return_value.execute.return_value = Mock(data=[])
         
         # First call
         rag_manager.load_constants()
@@ -107,8 +101,8 @@ class TestRAGDataManager:
         # Second call with force refresh
         rag_manager.load_constants(force_refresh=True)
         
-        # Should be called twice per collection (6 total calls)
-        assert mock_collection.stream.call_count == 6
+    # Should be called twice per collection (6 total calls)
+        assert mock_supabase.table.return_value.select.return_value.execute.call_count == 6
     
     def test_get_context_sections(self, rag_manager):
         """Test context section retrieval."""

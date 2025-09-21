@@ -55,7 +55,7 @@ class TestBookingAutomation:
             reservation_id="VRBO-12345",
             property_id="PROP-67890",
             platform=Platform.VRBO,
-            num_guests=4,
+            number_of_guests=4,
             email_id="email-12345"
         )
     
@@ -175,7 +175,7 @@ class TestBookingAutomation:
     @patch('src.main.BookingParser')
     @patch('src.main.FirestoreClient')
     def test_process_emails_sync_failure(self, mock_firestore, mock_parser, mock_gmail, automation, sample_email_data, sample_booking_data):
-        """Test email processing when Firestore sync fails."""
+        """Test email processing when database sync fails."""
         # Mock Gmail client
         mock_gmail_instance = Mock()
         mock_gmail_instance.connect.return_value = True
@@ -192,14 +192,14 @@ class TestBookingAutomation:
         )
         automation.booking_parser = mock_parser_instance
         
-        # Mock Firestore client failure
+        # Mock database client failure
         mock_firestore_instance = Mock()
         mock_firestore_instance.sync_bookings.return_value = [
             SyncResult(
                 success=False,
                 is_new=False,
                 reservation_id="VRBO-12345",
-                error_message="Firestore sync failed"
+                error_message="Database sync failed"
             )
         ]
         automation.firestore_client = mock_firestore_instance
@@ -210,7 +210,7 @@ class TestBookingAutomation:
         assert results['bookings_parsed'] == 1
         assert results['new_bookings'] == 0
         assert len(results['sync_errors']) == 1
-        assert results['sync_errors'][0].error_message == "Firestore sync failed"
+        assert results['sync_errors'][0].error_message == "Database sync failed"
     
     @patch('src.main.GmailClient')
     @patch('src.main.BookingParser')

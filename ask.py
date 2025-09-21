@@ -13,52 +13,45 @@ os.environ["LLM_MODEL"] = "gpt-3.5-turbo"  # Set proper model name
 # os.environ["LLM_PROVIDER"] = "local"    # use mock
 
 from src.llm.llm_skeleton import answer_question
-
-from src.firebase_sync.firestore_client import FirestoreClient
 from src.llm.llm_skeleton import get_llm_manager
+from src.supabase_sync.supabase_client import SupabaseClient
 
 
-def build_context_from_collection(collection_name: str, limit: int = None) -> str:
-	"""Read documents from Firestore `collection_name` and format a context string."""
-	client = FirestoreClient()
+def build_context_from_table(table_name: str, limit: int = None):
+	"""Read rows from Supabase `table_name` and return list of dicts."""
+	client = SupabaseClient()
 	if not client.initialize():
-		print(f"[ask] Failed to initialize Firestore client")
-		return ""
+		print(f"[ask] Failed to initialize Supabase client")
+		return []
 
-	# Get all documents if no limit specified, otherwise apply limit
+	table = client.client.table(table_name).select("*")
 	if limit:
-		docs = list(client.db.collection(collection_name).limit(limit).stream())
-		print(f"[ask] Reading {len(docs)} documents (limited to {limit}) from '{collection_name}'")
-	else:
-		docs = list(client.db.collection(collection_name).stream())
-		print(f"[ask] Reading ALL {len(docs)} documents from '{collection_name}'")
-	
-	if not docs:
-		print(f"[ask] No documents found in collection '{collection_name}'")
-		return ""
-
-	return docs  # Return the docs themselves, not formatted text
+		table = table.limit(limit)
+	res = table.execute()
+	rows = getattr(res, "data", []) or getattr(res, "json", {}).get("data", [])
+	print(f"[ask] Reading {len(rows)} rows from table '{table_name}'")
+	return rows
 
 
-def smart_context_builder(docs, question: str, max_context_length: int = 8000) -> str:
+def smart_context_builder(rows, question: str, max_context_length: int = 8000) -> str:
 	"""Build context intelligently based on question and token limits."""
 	
 	# Extract key info from each document for analysis
 	doc_summaries = []
-	for doc in docs:
-		d = doc.to_dict()
+	for row in rows:
+		d = row
 		# Create a short summary of each document
-		summary = f"ID:{doc.id}"
+		summary = f"ID:{d.get('id', '')}"
 		for key in ['from', 'sender', 'subject', 'company', 'type', 'category']:
 			if key in d:
 				summary += f" {key}:{d[key]}"
-		doc_summaries.append((doc.id, summary, d))
+		doc_summaries.append((d.get('id', ''), summary, d))
 	
 	# If asking about counts or totals, provide statistical summary
 	question_lower = question.lower()
 	if any(word in question_lower for word in ['how many', 'total', 'count', 'number of']):
 		# Provide statistical overview
-		total_count = len(docs)
+		total_count = len(rows)
 		
 		# Count by common fields
 		companies = {}
@@ -88,15 +81,14 @@ def smart_context_builder(docs, question: str, max_context_length: int = 8000) -
 		return stats_context
 	
 	# For other questions, use a sample of documents
-	sample_size = min(20, len(docs))
-	sampled_docs = docs[:sample_size]
+	sample_size = min(20, len(rows))
+	sampled_rows = rows[:sample_size]
 	
 	parts = []
 	current_length = 0
 	
-	for doc in sampled_docs:
-		d = doc.to_dict()
-		doc_text = f"Document ID: {doc.id}\n" + "\n".join(f"{k}: {v}" for k, v in d.items())
+	for d in sampled_rows:
+		doc_text = f"Row ID: {d.get('id','')}\n" + "\n".join(f"{k}: {v}" for k, v in d.items())
 		
 		if current_length + len(doc_text) > max_context_length:
 			break
@@ -104,22 +96,22 @@ def smart_context_builder(docs, question: str, max_context_length: int = 8000) -
 		parts.append(doc_text)
 		current_length += len(doc_text)
 	
-	if len(parts) < len(sampled_docs):
-		parts.append(f"\n[NOTE: Showing {len(parts)} of {len(docs)} total documents due to size limits]")
+	if len(parts) < len(sampled_rows):
+		parts.append(f"\n[NOTE: Showing {len(parts)} of {len(rows)} total rows due to size limits]")
 	
 	return "\n\n".join(parts)
 
 
-def ask_about_alon_test(question: str, collection_name: str = "Alon-test"):
-	# Get all documents from Firestore
-	docs = build_context_from_collection(collection_name, limit=None)
+def ask_about_alon_test(question: str, table_name: str = "Alon_test"):
+	# Get all rows from Supabase table
+	rows = build_context_from_table(table_name, limit=None)
 	
-	if not docs:
-		print("❌ No documents found in the collection")
+	if not rows:
+		print("❌ No rows found in the table")
 		return None
 	
 	# Build smart context based on the question
-	context = smart_context_builder(docs, question)
+	context = smart_context_builder(rows, question)
 
 	# Construct prompt using the smart context
 	if context:
@@ -141,13 +133,13 @@ def ask_about_alon_test(question: str, collection_name: str = "Alon-test"):
 
 def interactive_loop():
 	"""Interactive loop to ask multiple questions about the database."""
-	collection_name = os.getenv("ALON_TEST_COLLECTION", "Alon-test")
+	table_name = os.getenv("ALON_TEST_TABLE", "Alon_test")
 	
 	print("=" * 60)
 	print("🔥 Interactive Database Query Assistant")
 	print("=" * 60)
-	print(f"📁 Connected to Firestore collection: '{collection_name}'")
-	print("🤖 Using OpenAI GPT-3.5-turbo with your database context")
+	print(f"📁 Connected to Supabase table: '{table_name}'")
+	print("🤖 Using OpenAI with your database context")
 	print("\n💡 Tips:")
 	print("  - Ask questions about the data in your collection")
 	print("  - Type 'quit', 'exit', or 'q' to stop")
@@ -178,7 +170,7 @@ def interactive_loop():
 			print(f"\n🔍 Searching database for: '{question}'")
 			print("⏳ Processing...")
 			
-			ask_about_alon_test(question, collection_name)
+			ask_about_alon_test(question, table_name)
 			
 		except KeyboardInterrupt:
 			print("\n\n👋 Interrupted. Goodbye!")
@@ -193,8 +185,8 @@ if __name__ == "__main__":
 	specific_question = os.getenv("ALON_TEST_QUESTION")
 	if specific_question:
 		print(f"🎯 Running single question: {specific_question}")
-		collection_name = os.getenv("ALON_TEST_COLLECTION", "Alon-test")
-		ask_about_alon_test(specific_question, collection_name)
+		table_name = os.getenv("ALON_TEST_TABLE", "Alon_test")
+		ask_about_alon_test(specific_question, table_name)
 	else:
 		# Start interactive mode
 		interactive_loop()
