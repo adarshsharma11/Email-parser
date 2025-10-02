@@ -1,5 +1,4 @@
 # Core dependencies
-# Upgrade supabase to reduce pydantic v2 deprecation warnings
 supabase==2.7.4
 gotrue>=2.10.0
 python-dotenv==1.0.0
@@ -30,8 +29,8 @@ pytest-cov==4.1.0
 # FastAPI and web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic<2.0.0,>=1.10.0
-pydantic-settings==2.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
 python-multipart==0.0.6
 
 # Development and linting
