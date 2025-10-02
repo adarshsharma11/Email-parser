@@ -12,6 +12,7 @@ sys.path.insert(0, str(project_root))
 
 # Expose FastAPI app for Vercel
 app = create_app()
+handler = app
 
 if __name__ == "__main__":
     import uvicorn
