@@ -10,6 +10,7 @@ __pycache__/
 .Python
 build/
 develop-eggs/
+config/google_credentials.json
 dist/
 downloads/
 eggs/
@@ -206,3 +207,4 @@ tmp/
 # Local configuration files
 config.local.py
 settings.local.py
+config/google_credentials.json
