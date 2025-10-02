@@ -7,12 +7,24 @@ from datetime import datetime
 
 from .email_reader.gmail_client import GmailClient
 from .booking_parser.parser import BookingParser
+from .guest_communications.notifier import Notifier
+from .calendar_integration.google_calendar_client import GoogleCalendarClient
 # Use Supabase client under the FirestoreClient alias to keep interface stable
 from .supabase_sync.supabase_client import SupabaseClient as FirestoreClient
 from .utils.models import EmailData, BookingData, Platform, ProcessingResult, SyncResult
 from .utils.logger import setup_logger, BookingLogger
 from config.settings import app_config
 
+dummy_booking = BookingData(
+    reservation_id="123",
+    platform=Platform.AIRBNB,
+    guest_name="Alice",
+    guest_phone="+18777804236",
+    guest_email="adarshsharma002@gmail.com",
+    check_in_date="2025-09-23",
+    check_out_date="2025-09-25",
+    property_name="Sea View Villa"
+)
 
 class BookingAutomation:
     """Main orchestrator for vacation rental booking automation."""
@@ -25,6 +37,8 @@ class BookingAutomation:
         self.gmail_client = GmailClient()
         self.booking_parser = BookingParser()
         self.firestore_client = FirestoreClient()
+        self.notifier = Notifier()
+        self.calendar_client = GoogleCalendarClient()
     
     def process_emails(
         self,
@@ -109,16 +123,94 @@ class BookingAutomation:
                     if sync_result.success:
                         if sync_result.is_new:
                             self.booking_logger.log_new_booking(successful_bookings[i].to_dict())
+                            # Send welcome notification
+                            notify_success = self.notifier.send_welcome(successful_bookings[i])
+                            if not notify_success:
+                                self.logger.warning(
+                                    "Failed to send welcome notification",
+                                    reservation_id=sync_result.reservation_id
+                                )
+                                self.booking_logger.log_error(
+                                    Exception("Failed to send welcome notification"),
+                                    f"Notification failed for booking {sync_result.reservation_id}"
+                                )
                         else:
-                            self.booking_logger.log_duplicate_booking(
-                                sync_result.reservation_id,
-                                successful_bookings[i].platform.value
+                          event_id = self.calendar_client.add_booking_event(dummy_booking)
+                        if event_id:
+                            self.logger.info(
+                                "Google Calendar booking event created",
+                                event_id=event_id,
+                                reservation_id=dummy_booking.reservation_id
+                            )
+
+                        # Block the dates on the calendar
+                        block_event = self.calendar_client.block_dates(
+                            property_id=dummy_booking.property_name,
+                            check_in=dummy_booking.check_in_date,
+                            check_out=dummy_booking.check_out_date
+                        )
+                        if block_event:
+                            self.logger.info(
+                                "Property dates blocked on Google Calendar",
+                                property=successful_bookings[i].property_name,
+                                check_in=dummy_booking.check_in_date,
+                                check_out=dummy_booking.check_out_date,
                             )
                     else:
                         self.booking_logger.log_error(
                             Exception(sync_result.error_message),
                             f"Database sync failed: {sync_result.reservation_id}"
                         )
+
+                    if block_event:
+                        try:
+                            # Calculate cleaning date (same as check_out)
+                            scheduled_date = successful_bookings[i].check_out_date  
+                            # Get active crew for property
+                            from src.utils.crew import pick_crew_round_robin
+                            crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_name)
+                            crew_id = crew.get("id") if crew else None
+                            
+                            if not crew:
+                                self.logger.warning(
+                                    "No active crew found for property, creating task without crew assignment",
+                                    property=successful_bookings[i].property_name
+                                )
+
+                            # Create cleaning task in Supabase
+                            task = self.firestore_client.create_cleaning_task(
+                                            booking_id=successful_bookings[i].reservation_id,
+                                            property_id=dummy_booking.property_name,
+                                            scheduled_date=scheduled_date,
+                                            crew_id=crew_id
+                                    )
+                            # Note: Notification temporarily disabled to avoid service account issues
+                            notify_success = True  # Placeholder for notification success
+                            # notify_success = self.notifier.notify_cleaning_task(crew, task)
+                            if not notify_success:
+                                self.logger.warning(
+                                    "Failed to send cleaning notification",
+                                    task_id=task["id"] if task else None
+                                )
+                                self.booking_logger.log_error(
+                                    Exception("Failed to send cleaning notification"),
+                                    f"Notification failed for task {task['id'] if task else 'unknown'}"
+                                )
+                            if crew and task:
+                                # Add cleaning event in Google Calendar
+                                self.logger.info("About to call add_cleaning_event", crew_type=type(crew), crew_value=crew, task_type=type(task), task_value=task)
+                                event_id = self.calendar_client.add_cleaning_event(crew, task)
+                                if event_id:
+                                    # Update Supabase with calendar event ID
+                                    # self.firestore_client.update_cleaning_task(task["id"], {"calendar_event_id": event_id})
+                                    self.logger.info(
+                                        "Cleaning event scheduled",
+                                        event_id=event_id,
+                                        task_id=task["id"],
+                                        property=successful_bookings[i].property_name
+                                    )
+                        except Exception as e:
+                            self.booking_logger.log_error(e, f"Failed to schedule cleaning for booking {successful_bookings[i].reservation_id}")    
             
             # Mark emails as read (only if not dry run)
             if not dry_run:
@@ -170,7 +262,7 @@ class BookingAutomation:
 
 
 @click.command()
-@click.option('--platform', type=click.Choice(['vrbo', 'airbnb', 'booking']), 
+@click.option('--platform', type=click.Choice(['vrbo', 'airbnb', 'booking', 'plumguide']), 
               help='Specific platform to process')
 @click.option('--since-days', type=int, 
               help='Number of days to look back for emails')

@@ -27,6 +27,13 @@ pytest==7.4.2
 pytest-mock==3.11.1
 pytest-cov==4.1.0
 
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.11.0
+python-multipart==0.0.6
+
 # Development and linting
 black==23.7.0
 flake8==6.0.0

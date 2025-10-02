@@ -26,7 +26,8 @@ class GmailConfig:
             self.search_patterns = {
                 "vrbo": "from:vrbo.com OR from:homeaway.com",
                 "airbnb": "from:airbnb.com OR from:airbnb.co.uk",
-                "booking": "from:booking.com OR from:booking.co.uk"
+                "booking": "from:booking.com OR from:booking.co.uk",
+                "plumguide": "from:plumguide.com OR from:plumguide.co.uk"
             }
 
 
@@ -54,9 +55,11 @@ class AppConfig:
     # Data storage collection/table names
     bookings_collection: str = "bookings"
     properties_collection: str = "properties"
+    cleaning_tasks_collection: str = "cleaning_tasks"
+    cleaning_crews_collection: str = "cleaning_crews"
     
     # Email processing settings
-    supported_platforms: tuple = ("vrbo", "airbnb", "booking")
+    supported_platforms: tuple = ("vrbo", "airbnb", "booking", "plumguide")
     
     # Date formats for different platforms
     date_formats: Dict[str, str] = None
@@ -69,7 +72,8 @@ class AppConfig:
             self.date_formats = {
                 "vrbo": ["%m/%d/%Y", "%Y-%m-%d", "%B %d, %Y"],
                 "airbnb": ["%B %d, %Y", "%Y-%m-%d", "%d/%m/%Y"],
-                "booking": ["%Y-%m-%d", "%d/%m/%Y", "%B %d, %Y"]
+                "booking": ["%Y-%m-%d", "%d/%m/%Y", "%B %d, %Y"],
+                "plumguide": ["%a, %d %b %Y", "%d/%m/%Y", "%B %d, %Y"],
             }
 
 

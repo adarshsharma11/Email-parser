@@ -144,7 +144,11 @@ class BookingLogger:
             "Booking parsed successfully",
             reservation_id=booking_data.get('reservation_id'),
             platform=booking_data.get('platform'),
-            guest_name=booking_data.get('guest_name')
+            guest_name=booking_data.get('guest_name'),
+            check_in=booking_data.get('check_in'),
+            check_out=booking_data.get('check_out'),
+            property_id=booking_data.get('property_id'),
+            property_name=booking_data.get('property_name'),
         )
     
     def log_new_booking(self, booking_data: dict):

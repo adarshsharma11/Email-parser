@@ -12,6 +12,7 @@ class Platform(Enum):
     VRBO = "vrbo"
     AIRBNB = "airbnb"
     BOOKING = "booking"
+    PLUMGUIDE = "plumguide"
 
 
 @dataclass
