@@ -1,23 +1,23 @@
 """
-Main entry point for the FastAPI application.
+Main entry point for the FastAPI application (Vercel expects `app` here).
 """
-import os
 import sys
 from pathlib import Path
 
-# Add the project root to Python path before imports
+# Ensure project root is in sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.api.app import create_app, settings
 
-# Expose FastAPI app for Vercel
+# This is what Vercel looks for
 app = create_app()
 
+# Local dev only
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "src.main:app",  # Vercel needs this to point to `app`
+        app,
         host=settings.host,
         port=settings.port,
         reload=settings.environment == "development",
