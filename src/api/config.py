@@ -51,11 +51,11 @@ class FastAPISettings(BaseSettings):
     def parse_cors_origins(cls, v):
         """Parse CORS origins from environment variable or return default."""
         if v is None or v == "":
-            return ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "https://email-parser-42kzrhuog-adarshs-projects-92258c28.vercel.app"]
+            return ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "https://email-parser-frontend-lyart.vercel.app/"]
         if isinstance(v, str):
             # Handle comma-separated string from environment variable
             origins = [origin.strip() for origin in v.split(',') if origin.strip()]
-            return origins if origins else ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "https://email-parser-42kzrhuog-adarshs-projects-92258c28.vercel.app"]
+            return origins if origins else ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "https://email-parser-frontend-lyart.vercel.app"]
         return v
     
     @property
