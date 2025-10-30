@@ -115,3 +115,56 @@ async def get_booking_stats(
                 "details": {"error": str(e)}
             }
         )
+        
+@router.get(
+    "/propertyData/{platform}",
+    summary="Get booking reservation-property map for a specific platform",
+    description="Returns a dictionary mapping reservation_id to property_name for the given platform",
+    responses={
+        200: {"description": "Reservation map retrieved successfully"},
+        500: {"description": "Internal server error", "model": ErrorResponse}
+    }
+)
+async def get_booking_reservation_map(
+    platform: str,
+    booking_service: BookingService = Depends(get_booking_service)
+):
+    """
+    Example: /api/v1/bookings/propertyData/airbnb
+    """
+    try:
+        # Fetch bookings filtered by platform
+        bookings_response = booking_service.get_bookings_paginated(
+            page=1, limit=1000, platform=platform
+        )
+
+        if not bookings_response or "bookings" not in bookings_response:
+            raise HTTPException(status_code=404, detail=f"No bookings found for platform '{platform}'")
+
+        # Filter data for the given platform (in case service returns all)
+        bookings = [
+            b for b in bookings_response["bookings"]
+            if b.get("platform") == platform
+        ]
+
+        reservation_map = {
+            b["reservation_id"]: b["property_name"]
+            for b in bookings
+            if b.get("reservation_id") and b.get("property_name")
+        }
+
+        return {
+            "success": True,
+            "message": f"Reservation map for '{platform}' retrieved successfully",
+            "data": reservation_map
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Internal server error",
+                "error_code": "INTERNAL_ERROR",
+                "details": {"error": str(e)}
+            }
+        )
