@@ -270,7 +270,7 @@ class SupabaseClient:
                 tasks_by_booking[res_id].append({
                     "task_id": task.get("id"),
                     "scheduled_date": task.get("scheduled_date"),
-                    "crew": crew_info
+                    "crews": crew_info
                 })
 
             # 5️⃣ Merge bookings with tasks (even if no tasks exist)
