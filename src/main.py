@@ -185,8 +185,8 @@ class BookingAutomation:
                                             crew_id=crew_id
                                     )
                             # Note: Notification temporarily disabled to avoid service account issues
-                            notify_success = True  # Placeholder for notification success
-                            # notify_success = self.notifier.notify_cleaning_task(crew, task)
+                            # notify_success = True  # Placeholder for notification success
+                            notify_success = self.notifier.notify_cleaning_task(crew, task)
                             if not notify_success:
                                 self.logger.warning(
                                     "Failed to send cleaning notification",
