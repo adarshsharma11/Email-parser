@@ -197,12 +197,136 @@ class SupabaseClient:
             )
             if limit:
                 query = query.limit(limit)
-            res = query.execute()
-            rows = getattr(res, "data", []) or getattr(res, "json", {}).get("data", [])
-            self.logger.info("Retrieved bookings by platform", platform=platform, count=len(rows))
-            return rows
+
+            bookings_res = query.execute()
+
+            # Safely extract bookings (handle both supabase-py versions)
+            if hasattr(bookings_res, "data"):
+                bookings = bookings_res.data or []
+            elif hasattr(bookings_res, "json") and callable(bookings_res.json):
+                bookings = bookings_res.json().get("data", [])
+            else:
+                bookings = getattr(bookings_res, "json", {}).get("data", []) or []
+
+            if not bookings:
+                self.logger.info(f"No bookings found for platform={platform}")
+                return []
+
+            reservation_ids = [str(b["reservation_id"]) for b in bookings if b.get("reservation_id")]
+            self.logger.info(f"Found {len(bookings)} bookings, reservation_ids={reservation_ids}")
+
+            # 2️⃣ Fetch cleaning tasks
+            tasks = []
+            if reservation_ids:
+                tasks_res = (
+                    self.client.table("cleaning_tasks")
+                    .select("*")
+                    .in_("reservation_id", reservation_ids)
+                    .order("scheduled_date", desc=True)
+                    .execute()
+                )
+
+                if hasattr(tasks_res, "data"):
+                    tasks = tasks_res.data or []
+                elif hasattr(tasks_res, "json") and callable(tasks_res.json):
+                    tasks = tasks_res.json().get("data", [])
+                else:
+                    tasks = getattr(tasks_res, "json", {}).get("data", []) or []
+
+            self.logger.info(f"Fetched {len(tasks)} tasks for {len(reservation_ids)} bookings")
+
+            # 3️⃣ Fetch crews if any crew_id exists
+            crew_ids = list({t["crew_id"] for t in tasks if isinstance(t, dict) and t.get("crew_id")})
+            crew_map = {}
+
+            if crew_ids:
+                crews_res = (
+                    self.client.table("cleaning_crews")
+                    .select("*")
+                    .in_("id", crew_ids)
+                    .execute()
+                )
+
+                if hasattr(crews_res, "data"):
+                    crews = crews_res.data or []
+                elif hasattr(crews_res, "json") and callable(crews_res.json):
+                    crews = crews_res.json().get("data", [])
+                else:
+                    crews = getattr(crews_res, "json", {}).get("data", []) or []
+
+                crew_map = {str(c["id"]): c for c in crews if isinstance(c, dict) and c.get("id")}
+
+            self.logger.info(f"Fetched {len(crew_map)} crews")
+
+            # 4️⃣ Group tasks by reservation_id
+            from collections import defaultdict
+            tasks_by_booking = defaultdict(list)
+
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                res_id = str(task.get("reservation_id"))
+                crew_info = crew_map.get(str(task.get("crew_id")))
+                tasks_by_booking[res_id].append({
+                    "task_id": task.get("id"),
+                    "scheduled_date": task.get("scheduled_date"),
+                    "crew": crew_info
+                })
+
+            # 5️⃣ Merge bookings with tasks (even if no tasks exist)
+            result = []
+            for booking in bookings:
+                res_id = str(booking.get("reservation_id"))
+                result.append({
+                    **booking,
+                    "tasks": tasks_by_booking.get(res_id, [])
+                })
+
+            self.logger.info(f"Final result: {len(result)} bookings (with/without tasks)")
+            return result
+
         except Exception as e:
-            self.logger.error("Error getting bookings by platform", platform=platform, error=str(e))
+            self.logger.error(
+                "Error getting bookings with tasks and crew",
+                platform=platform,
+                error=str(e)
+            )
+            return []
+
+    def get_all_bookings(self) -> List[Dict[str, Any]]:
+        """Fetch ALL bookings (for testing/debug)"""
+        try:
+            if not self.initialized and not self.initialize():
+                self.logger.error("Supabase client not initialized — cannot fetch all bookings.")
+                return []
+
+            self.logger.info("Fetching ALL bookings from Supabase...")
+            table_name = getattr(app_config, "bookings_collection", "bookings")
+            self.logger.info(f"Using table: {table_name}")
+
+            bookings_res = (
+                self.client.table(table_name)
+                .select("*")
+                .order("created_at", desc=True)
+                .execute()
+            )
+
+            # Debug print the response
+            self.logger.info(f"Supabase response: {bookings_res}")
+            
+            # Extract rows safely
+            if hasattr(bookings_res, "data"):
+                data = bookings_res.data or []
+            elif hasattr(bookings_res, "json") and callable(bookings_res.json):
+                data = bookings_res.json().get("data", [])
+            else:
+                data = getattr(bookings_res, "json", {}).get("data", []) or []
+
+            self.logger.info(f"Fetched {len(data)} total bookings.")
+            return data
+
+        except Exception as e:
+            self.logger.error("Error fetching all bookings", error=str(e))
             return []
 
     def get_bookings_by_date_range(self, start_date: datetime, end_date: datetime, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -289,3 +413,4 @@ class SupabaseClient:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
