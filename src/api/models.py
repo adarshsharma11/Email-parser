@@ -81,3 +81,25 @@ class HealthResponse(BaseModel):
 class CrewResponse(APIResponse):
     """Response model for crew list."""
     data: List[Dict[str, Any]] = Field(..., description="List of active crew members")
+
+
+class CreateCrewRequest(BaseModel):
+    """Request model for creating a crew member."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    name: str = Field(..., description="Crew member name")
+    email: str = Field(..., description="Crew member email")
+    phone: str = Field(..., description="Crew member phone number")
+    property_id: Optional[str] = Field(None, description="Assigned property ID")
+    role: Optional[str] = Field(None, description="Crew member role (e.g., cleaner, manager)")
+    active: bool = Field(default=True, description="Whether the crew member is active")
+
+
+class CreateCrewResponse(APIResponse):
+    """Response model for creating a crew member."""
+    data: Dict[str, Any] = Field(..., description="Created crew member details")
+
+
+class DeleteCrewResponse(APIResponse):
+    """Response model for deleting a crew member."""
+    data: Dict[str, Any] = Field(..., description="Deletion result")

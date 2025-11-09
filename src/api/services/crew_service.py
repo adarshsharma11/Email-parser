@@ -8,6 +8,7 @@ import time
 from ...supabase_sync.supabase_client import SupabaseClient
 from ..models import APIResponse, ErrorResponse
 from ..config import settings
+from config.settings import app_config
 
 
 class CrewService:
@@ -55,3 +56,92 @@ class CrewService:
         self._cache[cache_key] = (time.time(), crews)
         
         return crews
+    
+    def add_crew(self, crew_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add a new crew member to the system.
+        
+        Args:
+            crew_data: Crew member data including name, email, phone, role, etc.
+            
+        Returns:
+            Created crew member data
+            
+        Raises:
+            Exception: If creation fails or duplicate email/phone found
+        """
+        # Ensure client is initialized
+        if not self.supabase_client.initialized:
+            if not self.supabase_client.initialize():
+                raise Exception("Failed to initialize Supabase client")
+        
+        # Check for duplicate email or phone
+        email = crew_data.get('email')
+        phone = crew_data.get('phone')
+        
+        if email or phone:
+            # Query for existing crew members with same email or phone
+            query = self.supabase_client.client.table(app_config.cleaning_crews_collection).select('id', 'email', 'phone')
+            
+            if email and phone:
+                query = query.or_(f'email.eq.{email},phone.eq.{phone}')
+            elif email:
+                query = query.eq('email', email)
+            elif phone:
+                query = query.eq('phone', phone)
+            
+            existing_result = query.execute()
+            
+            if existing_result.data:
+                existing = existing_result.data[0]
+                if email and existing.get('email') == email:
+                    raise Exception(f"A crew member with email '{email}' already exists")
+                if phone and existing.get('phone') == phone:
+                    raise Exception(f"A crew member with phone '{phone}' already exists")
+        
+        # Add timestamp
+        crew_data["created_at"] = datetime.utcnow().isoformat()
+        crew_data["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Filter out None values to avoid database schema conflicts
+        filtered_data = {k: v for k, v in crew_data.items() if v is not None}
+        
+        # Create crew member in Supabase
+        result = self.supabase_client.client.table(app_config.cleaning_crews_collection).insert(filtered_data).execute()
+        
+        # Clear cache since we added a new crew member
+        self._cache.clear()
+        
+        if result.data:
+            return result.data[0]
+        else:
+            raise Exception("Failed to create crew member")
+    
+    def delete_crew(self, crew_id: str) -> bool:
+        """
+        Delete a crew member from the system.
+        
+        Args:
+            crew_id: ID of the crew member to delete
+            
+        Returns:
+            True if deletion was successful
+            
+        Raises:
+            Exception: If deletion fails
+        """
+        # Ensure client is initialized
+        if not self.supabase_client.initialized:
+            if not self.supabase_client.initialize():
+                raise Exception("Failed to initialize Supabase client")
+        
+        # Delete crew member from Supabase
+        result = self.supabase_client.client.table(app_config.cleaning_crews_collection).delete().eq("id", crew_id).execute()
+        
+        # Clear cache since we deleted a crew member
+        self._cache.clear()
+        
+        if result.data:
+            return True
+        else:
+            raise Exception(f"Crew member with ID {crew_id} not found")
