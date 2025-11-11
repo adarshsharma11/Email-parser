@@ -50,6 +50,16 @@ async def get_properties(
 
     return result
 
+@router.delete("/property/{property_id}")
+async def delete_property(property_id: str):
+    """Delete a property by ID (service-based)."""
+    result = property_service.delete_property(property_id)
+
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+   
+
 @router.get("/property/{property_id}.ics")
 async def generate_ical_feed(property_id: str):
     """

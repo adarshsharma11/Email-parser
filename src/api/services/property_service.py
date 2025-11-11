@@ -66,6 +66,35 @@ class PropertyService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def delete_property(self, property_id: str) -> Dict[str, Any]:
+        """Delete a property by its ID."""
+        try:
+            if not self.supabase_client.initialized:
+                self.supabase_client.initialize()
+
+            result = (
+                self.supabase_client.client
+                .table(app_config.properties_collection)
+                .delete()
+                .eq("id", property_id)
+                .execute()
+            )
+
+            if result.data:
+                return {
+                    "success": True,
+                    "message": f"Property with ID {property_id} deleted successfully",
+                    "deleted_count": len(result.data)
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"No property found with ID {property_id}"
+                }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
     def get_properties(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
         """Get paginated list of properties."""
