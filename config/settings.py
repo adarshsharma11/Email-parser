@@ -57,6 +57,7 @@ class AppConfig:
     properties_collection: str = "properties"
     cleaning_tasks_collection: str = "cleaning_tasks"
     cleaning_crews_collection: str = "cleaning_crews"
+    properties_collection= "properties"
     
     # Email processing settings
     supported_platforms: tuple = ("vrbo", "airbnb", "booking", "plumguide")
@@ -77,7 +78,13 @@ class AppConfig:
             }
 
 
-# Global configuration instances
+@dataclass
+class APIConfig:
+    """API and URL configuration settings."""
+    base_url: str = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+
+
 gmail_config = GmailConfig()
 supabase_config = SupabaseConfig()
 app_config = AppConfig()
+api_config = APIConfig()
