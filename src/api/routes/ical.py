@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException,Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from ...supabase_sync.supabase_client import SupabaseClient
 from ..services.property_service import PropertyService
@@ -70,4 +71,8 @@ async def generate_ical_feed(property_id: str):
         raise HTTPException(status_code=404, detail="Property not found")
 
     ical_content = property_service.generate_ical_feed(prop)
-    return ical_content
+    return Response(
+        content=ical_content,
+        media_type="text/calendar",
+        headers={"Content-Disposition": f"attachment; filename=\"{property_id}.ics\""}
+    )

@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 from ...supabase_sync.supabase_client import SupabaseClient
 from ..models import APIResponse, ErrorResponse
 from config.settings import app_config, api_config
@@ -40,8 +41,8 @@ class PropertyService:
                 "airbnb_id": airbnb_id,
                 "booking_id": booking_id,
                 "status": status,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
 
             # Insert into Supabase
@@ -55,7 +56,7 @@ class PropertyService:
             if result.data and len(result.data) > 0:
                 inserted_property = result.data[0]
                 # Construct iCal URL using the DB-generated ID
-                inserted_property["ical_feed_url"] = f"{base_url}/api/v1/property/{inserted_property['id']}.ics"
+                inserted_property["ical_feed_url"] = f"{base_url}/property/{inserted_property['id']}.ics"
                 self.supabase_client.client.table(app_config.properties_collection)\
                 .update({"ical_feed_url": inserted_property["ical_feed_url"]})\
                 .eq("id", inserted_property["id"]).execute()
@@ -150,23 +151,41 @@ class PropertyService:
 
     def generate_ical_feed(self, prop: Dict[str, Any]) -> str:
         """
-        Generate iCal content string for the property
+        Generate valid iCal content for the property.
+
+        Notes:
+        - Lines must not have leading spaces; in iCalendar, a leading space indicates
+          a folded continuation line, which would corrupt properties.
+        - Use CRLF line endings per RFC 5545.
         """
         property_id = prop["id"]
-        now = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-        # For demonstration, using static start/end; you can fetch bookings later
+        now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+        # Demo event times (UTC). Replace with actual booking data when available.
         start = "20251110T120000Z"
         end = "20251112T120000Z"
 
-        ical_content = f"""BEGIN:VCALENDAR
-        VERSION:2.0
-        PRODID:-//YourPortal//Booking Calendar//EN
-        BEGIN:VEVENT
-        UID:{property_id}@yourportal.com
-        DTSTAMP:{now}
-        SUMMARY:Sample Booking for {prop['name']}
-        DTSTART:{start}
-        DTEND:{end}
-        END:VEVENT
-        END:VCALENDAR"""
-        return ical_content      
+        # Derive a meaningful UID domain from configured base URL
+        parsed = urlparse(api_config.base_url or "")
+        uid_domain = (parsed.hostname or "example.com").strip()
+
+        prodid = f"-//{uid_domain}//Booking Calendar//EN"
+
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            f"PRODID:{prodid}",
+            "CALSCALE:GREGORIAN",
+            "METHOD:PUBLISH",
+            "BEGIN:VEVENT",
+            f"UID:{property_id}@{uid_domain}",
+            f"DTSTAMP:{now}",
+            f"SUMMARY:Sample Booking for {prop['name']}",
+            f"DTSTART:{start}",
+            f"DTEND:{end}",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+
+        # Join with CRLF and ensure trailing newline
+        return "\r\n".join(lines) + "\r\n"
