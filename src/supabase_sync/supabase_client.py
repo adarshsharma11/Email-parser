@@ -1,7 +1,7 @@
 """
 Supabase client helper for syncing vacation rental booking data.
 """
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, Dict, Any, List
 import structlog
 
@@ -354,7 +354,7 @@ class SupabaseClient:
         try:
             if not self.initialized and not self.initialize():
                 return False
-            updates["updated_at"] = datetime.utcnow()
+            updates["updated_at"] = datetime.now(timezone.utc)
             updates = self._serialize_payload(updates)
             self.client.table(app_config.bookings_collection).update(updates).eq("reservation_id", reservation_id).execute()
             self.logger.info("Successfully updated booking", reservation_id=reservation_id)
