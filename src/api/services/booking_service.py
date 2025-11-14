@@ -173,3 +173,35 @@ class BookingService:
                 "count": 0,
                 "error": str(e)
             }
+            
+    def update_guest_phone(self, reservation_id: str, guest_phone: str) -> bool:
+        """
+        Update the guest_phone field for a booking.
+
+        Args:
+            reservation_id: Unique reservation id for the booking
+            guest_phone: New guest phone number (string)
+
+        Returns:
+            True on success, False otherwise
+        """
+        try:
+            phone = (guest_phone or "").strip()
+            if not phone:
+                raise ValueError("guest_phone cannot be empty")
+
+            updated = self.supabase_client.update_booking(
+                reservation_id,
+                {"guest_phone": phone}
+            )
+            if not updated:
+                raise Exception("Database update failed")
+            return True
+        except Exception as e:
+            self.logger.error(
+                "Failed to update guest_phone",
+                reservation_id=reservation_id,
+                guest_phone=guest_phone,
+                error=str(e)
+            )
+            return False

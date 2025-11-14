@@ -4,6 +4,7 @@ Booking API endpoints.
 from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse
 from ..dependencies import get_booking_service
 from ..services.booking_service import BookingService
@@ -104,6 +105,48 @@ async def get_booking_stats(
         
         return stats_response
         
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Internal server error",
+                "error_code": "INTERNAL_ERROR",
+                "details": {"error": str(e)}
+            }
+        )
+        
+class UpdateGuestPhoneRequest(BaseModel):
+    guest_phone: str = Field(..., min_length=1, description="Updated guest phone number")
+
+
+@router.patch(
+    "/{reservation_id}",
+    summary="Update guest phone number for a booking",
+    responses={
+        200: {"description": "Guest phone updated successfully"},
+        404: {"description": "Booking not found", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
+)
+async def update_booking_guest_phone(
+    reservation_id: str,
+    payload: UpdateGuestPhoneRequest,
+    booking_service: BookingService = Depends(get_booking_service),
+):
+    """
+    Update the `guest_phone` field for a booking identified by reservation id.
+    """
+    try:
+        ok = booking_service.update_guest_phone(reservation_id, payload.guest_phone)
+        if not ok:
+            raise HTTPException(status_code=404, detail={
+                "message": "Booking not found or update failed",
+                "error_code": "UPDATE_FAILED",
+                "details": {"reservation_id": reservation_id}
+            })
+        return {"success": True, "message": "Guest phone updated", "data": {"reservation_id": reservation_id, "guest_phone": payload.guest_phone}}
     except HTTPException:
         raise
     except Exception as e:
