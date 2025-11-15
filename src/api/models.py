@@ -103,3 +103,18 @@ class CreateCrewResponse(APIResponse):
 class DeleteCrewResponse(APIResponse):
     """Response model for deleting a crew member."""
     data: Dict[str, Any] = Field(..., description="Deletion result")
+
+class UserRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    email: str = Field(..., description="User email")
+    password: str = Field(..., description="User password")
+
+class UserUpdateRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    password: str = Field(..., description="User password")
+
+class UserResponse(APIResponse):
+    data: Dict[str, Any] = Field(..., description="User data")
+
+class UserListResponse(APIResponse):
+    data: List[Dict[str, Any]] = Field(..., description="List of users")
