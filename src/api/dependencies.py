@@ -10,6 +10,7 @@ from ..supabase_sync.supabase_client import SupabaseClient
 from ..utils.logger import setup_logger
 from .config import settings
 from .services.booking_service import BookingService
+from .services.user_service import UserService
 
 
 # Global service instances
@@ -45,6 +46,12 @@ def get_crew_service():
     """Get crew service instance with caching."""
     from .services.crew_service import CrewService
     return CrewService()
+
+
+@lru_cache(maxsize=1)
+def get_user_service():
+    """Get user service instance with caching."""
+    return UserService()
 
 
 @asynccontextmanager

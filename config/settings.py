@@ -58,6 +58,7 @@ class AppConfig:
     cleaning_tasks_collection: str = "cleaning_tasks"
     cleaning_crews_collection: str = "cleaning_crews"
     properties_collection= "properties"
+    users_collection: str = "user_credentials"
     
     # Email processing settings
     supported_platforms: tuple = ("vrbo", "airbnb", "booking", "plumguide")
