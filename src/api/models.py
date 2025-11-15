@@ -118,3 +118,6 @@ class UserResponse(APIResponse):
 
 class UserListResponse(APIResponse):
     data: List[Dict[str, Any]] = Field(..., description="List of users")
+
+class ConnectionResponse(APIResponse):
+    data: Dict[str, Any] = Field(..., description="Connection result")

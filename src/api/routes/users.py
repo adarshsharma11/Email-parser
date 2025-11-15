@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from ..services.user_service import UserService
-from ..models import UserRequest, UserUpdateRequest, UserResponse, UserListResponse, ErrorResponse
+from ..models import UserRequest, UserUpdateRequest, UserResponse, UserListResponse, ConnectionResponse, ErrorResponse
 from ..dependencies import get_user_service
+from ...email_reader.gmail_client import GmailClient
+from cryptography.fernet import InvalidToken
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -40,3 +42,27 @@ async def delete_user(email: str, service: UserService = Depends(get_user_servic
         return {"success": True, "message": "User deleted", "data": {"email": email}}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Failed to delete user", "details": {"error": str(e)}})
+
+
+@router.post("/{email}/connect", response_model=ConnectionResponse, responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
+async def connect_user_email(email: str, service: UserService = Depends(get_user_service)):
+    try:
+        user = service.get_user(email)
+        if not user:
+            raise HTTPException(status_code=404, detail={"message": "User not found"})
+        decrypted = None
+        if user.get("password"):
+            try:
+                decrypted = service.decrypt(user["password"])
+            except InvalidToken:
+                raise HTTPException(status_code=400, detail={"message": "Invalid encrypted password for user"})
+        if not decrypted:
+            raise HTTPException(status_code=400, detail={"message": "Password missing for user"})
+
+        client = GmailClient()
+        ok = client.connect_with_credentials(email, decrypted)
+        return {"success": ok, "message": "Connection successful" if ok else "Connection failed", "data": {"email": email, "connected": ok}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to connect to Gmail", "details": {"error": str(e)}})

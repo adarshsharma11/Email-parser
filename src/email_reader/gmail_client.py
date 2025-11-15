@@ -45,6 +45,29 @@ class GmailClient:
             self.connected = False
             return False
 
+    def connect_with_credentials(self, email_addr: str, password: str) -> bool:
+        """Connect to Gmail using provided credentials instead of .env."""
+        try:
+            self.logger.info(
+                "Connecting to Gmail IMAP server with provided credentials",
+                server=gmail_config.imap_server,
+                port=gmail_config.imap_port,
+            )
+
+            self.connection = imaplib.IMAP4_SSL(
+                gmail_config.imap_server,
+                gmail_config.imap_port,
+            )
+            self.connection.login(email_addr, password)
+            self.connected = True
+
+            self.logger.info("Successfully connected to Gmail (provided credentials)")
+            return True
+        except Exception as e:
+            self.logger.error("Failed to connect to Gmail with provided credentials", error=str(e))
+            self.connected = False
+            return False
+
     def disconnect(self):
         """Disconnect from Gmail IMAP server."""
         if self.connection and self.connected:

@@ -14,7 +14,7 @@ class UserService:
 
     def _build_fernet(self) -> Fernet:
         secret = os.getenv("ENCRYPTION_SECRET") or supabase_config.get_auth_key()
-        salt = os.getenv("ENCRYPTION_SALT", "email-parser-salt")
+        salt = os.getenv("ENCRYPTION_SALT", "email-parser123")
         key = self._derive_key(secret, salt)
         return Fernet(key)
 
