@@ -11,6 +11,7 @@ from ..utils.logger import setup_logger
 from .config import settings
 from .services.booking_service import BookingService
 from .services.user_service import UserService
+from .services.dashboard_service import DashboardService
 
 
 # Global service instances
@@ -52,6 +53,11 @@ def get_crew_service():
 def get_user_service():
     """Get user service instance with caching."""
     return UserService()
+
+
+@lru_cache(maxsize=1)
+def get_dashboard_service():
+    return DashboardService()
 
 
 @asynccontextmanager
