@@ -121,3 +121,12 @@ class UserListResponse(APIResponse):
 
 class ConnectionResponse(APIResponse):
     data: Dict[str, Any] = Field(..., description="Connection result")
+
+class DashboardMetrics(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    total_bookings: int = Field(...)
+    unique_customers: int = Field(...)
+    monthly_sales: List[Dict[str, Any]] = Field(default_factory=list)
+
+class DashboardResponse(APIResponse):
+    data: DashboardMetrics | Dict[str, Any] = Field(..., description="Dashboard metrics")
