@@ -55,14 +55,21 @@ async def connect_user_email(email: str, service: UserService = Depends(get_user
             try:
                 decrypted = service.decrypt(user["password"])
             except InvalidToken:
+                service.update_status(email, "inactive")
                 raise HTTPException(status_code=400, detail={"message": "Invalid encrypted password for user"})
         if not decrypted:
+            service.update_status(email, "inactive")
             raise HTTPException(status_code=400, detail={"message": "Password missing for user"})
 
         client = GmailClient()
         ok = client.connect_with_credentials(email, decrypted)
+        service.update_status(email, "active" if ok else "inactive")
         return {"success": ok, "message": "Connection successful" if ok else "Connection failed", "data": {"email": email, "connected": ok}}
     except HTTPException:
         raise
     except Exception as e:
+        try:
+            service.update_status(email, "inactive")
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail={"message": "Failed to connect to Gmail", "details": {"error": str(e)}})
