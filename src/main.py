@@ -14,6 +14,7 @@ from .supabase_sync.supabase_client import SupabaseClient as FirestoreClient
 from .utils.models import EmailData, BookingData, Platform, ProcessingResult, SyncResult
 from .utils.logger import setup_logger, BookingLogger
 from config.settings import app_config
+from .api.services.user_service import UserService
 
 dummy_booking = BookingData(
     reservation_id="123",
@@ -39,6 +40,7 @@ class BookingAutomation:
         self.firestore_client = FirestoreClient()
         self.notifier = Notifier()
         self.calendar_client = GoogleCalendarClient()
+        self.user_service = UserService()
     
     def process_emails(
         self,
@@ -66,12 +68,31 @@ class BookingAutomation:
                            limit=limit,
                            dry_run=dry_run)
             
-            # Connect to Gmail
-            if not self.gmail_client.connect():
-                raise Exception("Failed to connect to Gmail")
-            
-            # Fetch emails
-            emails = self.gmail_client.fetch_emails(platform, since_days, limit)
+            active_users = self.user_service.list_active_users()
+            if not active_users:
+                return self._get_empty_results()
+
+            emails: List[EmailData] = []
+            for u in active_users:
+                email_addr = u.get("email")
+                enc = u.get("password")
+                if not email_addr or not enc:
+                    continue
+                try:
+                    pwd = self.user_service.decrypt(enc)
+                except Exception:
+                    self.user_service.update_status(email_addr, "inactive")
+                    continue
+                client = GmailClient()
+                if not client.connect_with_credentials(email_addr, pwd):
+                    self.user_service.update_status(email_addr, "inactive")
+                    continue
+                fetched = client.fetch_emails(platform, since_days, limit)
+                emails.extend(fetched or [])
+                for ed in fetched or []:
+                    if not dry_run:
+                        client.mark_as_read(ed.email_id)
+                client.disconnect()
             
             if not emails:
                 self.logger.info("No emails found matching criteria")
@@ -217,8 +238,6 @@ class BookingAutomation:
                 for email_data in emails:
                     self.gmail_client.mark_as_read(email_data.email_id)
             
-            # Disconnect from Gmail
-            self.gmail_client.disconnect()
             
             # Print summary
             self.booking_logger.print_summary()

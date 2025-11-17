@@ -138,3 +138,18 @@ class UserService:
             .execute()
         )
         return True
+
+    def list_active_users(self, limit: int = 100, offset: int = 0) -> list[Dict[str, Any]]:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+
+        result = (
+            self.supabase.client
+            .table(app_config.users_collection)
+            .select("email,password,status")
+            .eq("status", "active")
+            .range(offset, offset + max(0, limit) - 1)
+            .execute()
+        )
+        return result.data or []
