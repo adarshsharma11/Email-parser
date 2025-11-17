@@ -80,6 +80,20 @@ class UserService:
         )
         return True
 
+    def update_status(self, email: str, status: str) -> bool:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+
+        (
+            self.supabase.client
+            .table(app_config.users_collection)
+            .update({"status": status})
+            .eq("email", email)
+            .execute()
+        )
+        return True
+
     def get_user(self, email: str) -> Optional[Dict[str, Any]]:
         if not self.supabase.initialized:
             if not self.supabase.initialize():
@@ -105,7 +119,7 @@ class UserService:
         result = (
             self.supabase.client
             .table(app_config.users_collection)
-            .select("email")
+            .select("email,status")
             .range(offset, offset + max(0, limit) - 1)
             .execute()
         )
