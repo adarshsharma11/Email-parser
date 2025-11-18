@@ -73,3 +73,12 @@ async def connect_user_email(email: str, service: UserService = Depends(get_user
         except Exception:
             pass
         raise HTTPException(status_code=500, detail={"message": "Failed to connect to Gmail", "details": {"error": str(e)}})
+
+
+@router.post("/{email}/deactivate", response_model=UserResponse, responses={500: {"model": ErrorResponse}})
+async def deactivate_user(email: str, service: UserService = Depends(get_user_service)):
+    try:
+        service.update_status(email, "inactive")
+        return {"success": True, "message": "User deactivated", "data": {"email": email}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to update status", "details": {"error": str(e)}})
