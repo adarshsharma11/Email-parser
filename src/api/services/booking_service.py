@@ -8,6 +8,8 @@ import time
 from ...supabase_sync.supabase_client import SupabaseClient
 from ..models import BookingSummary, BookingStatsResponse, ErrorResponse
 from ..config import settings
+from ...guest_communications.notifier import Notifier
+from ...utils.models import BookingData, Platform
 
 
 class BookingService:
@@ -189,13 +191,29 @@ class BookingService:
             phone = (guest_phone or "").strip()
             if not phone:
                 raise ValueError("guest_phone cannot be empty")
-
+            existing = self.supabase_client.get_booking_by_reservation_id(reservation_id)
             updated = self.supabase_client.update_booking(
                 reservation_id,
                 {"guest_phone": phone}
             )
             if not updated:
                 raise Exception("Database update failed")
+            try:
+                data = existing or {}
+                data.update({"guest_phone": phone})
+                booking = BookingData(
+                    reservation_id=reservation_id,
+                    platform=data.get("platform") or Platform.VRBO,
+                    guest_name=data.get("guest_name") or "Guest",
+                    guest_phone=phone,
+                    guest_email=data.get("guest_email"),
+                    check_in_date=data.get("check_in_date"),
+                    check_out_date=data.get("check_out_date"),
+                    property_name=data.get("property_name")
+                )
+                Notifier().send_welcome_whatsapp(booking)
+            except Exception as notify_err:
+                self.logger.warning("WhatsApp welcome send failed", reservation_id=reservation_id, error=str(notify_err))
             return True
         except Exception as e:
             self.logger.error(

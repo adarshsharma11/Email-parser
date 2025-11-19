@@ -11,7 +11,7 @@ import json
 
 from .config import settings
 from .dependencies import get_logger, get_supabase_client, get_booking_service
-from .routes import bookings, health, crews, ical, users, dashboard
+from .routes import bookings, health, crews, ical, users, dashboard, auth
 from .models import ErrorResponse
 
 
@@ -88,6 +88,33 @@ def create_app() -> FastAPI:
         )
     
     # Include routers with versioning
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        path = request.url.path
+        method = request.method
+        open_paths = {
+            f"{settings.api_prefix}/v1/health",
+            f"{settings.api_prefix}/v1/auth/login",
+            f"{settings.api_prefix}/v1/auth/register",
+            "/",
+            f"{settings.api_prefix}/docs",
+            f"{settings.api_prefix}/redoc",
+            f"{settings.api_prefix}/openapi.json",
+        }
+        if method == "OPTIONS" or any(path.startswith(p) for p in open_paths):
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(status_code=401, content=ErrorResponse(success=False, message="Unauthorized", error_code="UNAUTHORIZED").dict())
+        token = auth_header.split(" ", 1)[1]
+        try:
+            from .security.jwt import verify_token
+            payload = verify_token(token)
+            request.state.user_email = payload.get("sub")
+        except Exception as e:
+            return JSONResponse(status_code=401, content=ErrorResponse(success=False, message="Invalid token", error_code="UNAUTHORIZED", details={"error": str(e)}).dict())
+        return await call_next(request)
     app.include_router(
         bookings.router,
         prefix=f"{settings.api_prefix}/v1"
@@ -115,6 +142,11 @@ def create_app() -> FastAPI:
 
     app.include_router(
         dashboard.router,
+        prefix=f"{settings.api_prefix}/v1"
+    )
+
+    app.include_router(
+        auth.router,
         prefix=f"{settings.api_prefix}/v1"
     )
     

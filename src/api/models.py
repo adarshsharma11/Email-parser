@@ -122,6 +122,19 @@ class UserListResponse(APIResponse):
 class ConnectionResponse(APIResponse):
     data: Dict[str, Any] = Field(..., description="Connection result")
 
+class RegisterRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    email: str = Field(..., description="User email")
+    password: str = Field(..., description="User password")
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    email: str = Field(..., description="User email")
+    password: str = Field(..., description="User password")
+
+class AuthResponse(APIResponse):
+    data: Dict[str, Any] = Field(..., description="Auth data including token")
+
 class DashboardMetrics(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     total_bookings: int = Field(...)

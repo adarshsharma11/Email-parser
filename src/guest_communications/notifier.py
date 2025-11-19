@@ -42,6 +42,24 @@ class Notifier:
             self.logger.error("welcome_failed", error=str(e), reservation_id=booking.reservation_id)
             return False
 
+    def send_welcome_whatsapp(self, booking: BookingData) -> bool:
+        try:
+            body = (
+                f"Hi {booking.guest_name} 👋\n\n"
+                f"Your booking at *{booking.property_name}* is confirmed! 🎉\n\n"
+                f"🛎 *Check-in:* {booking.check_in_date}\n"
+                f"🚪 *Check-out:* {booking.check_out_date}\n\n"
+                f"If you need anything before your stay, just reply to this message.\n"
+                f"We look forward to hosting you! 😊"
+            )
+            if booking.guest_phone:
+                self.sms.send_whatsapp(to=booking.guest_phone, body=body)
+            self.logger.info("welcome_whatsapp_sent", reservation_id=booking.reservation_id)
+            return True
+        except Exception as e:
+            self.logger.error("welcome_whatsapp_failed", error=str(e), reservation_id=booking.reservation_id)
+            return False
+
     def notify_cleaning_task(self, crew: dict, task: dict, include_calendar_invite: bool = True) -> bool:
         """
         crew: {id, name, phone, email}
