@@ -38,3 +38,6 @@ cryptography==41.0.5
 black==23.7.0
 flake8==6.0.0
 mypy==1.5.1
+
+# Twilio for SMS notifications
+twilio==9.2.3
