@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
+from fastapi import Request
 from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse
 from ..dependencies import get_logger
-from ..services.user_service import UserService
+from ..services.auth_service import AuthService
 from ..security.jwt import create_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -11,8 +12,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(req: RegisterRequest):
     logger = get_logger()
     try:
-        service = UserService()
-        saved = service.save_user(req.email, req.password)
+        service = AuthService()
+        saved = service.save_user(req.email, req.password, req.first_name, req.last_name)
         token = create_token({"sub": req.email})
         logger.info("user_registered", email=req.email)
         return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email}}
@@ -24,7 +25,7 @@ async def register(req: RegisterRequest):
 async def login(req: LoginRequest):
     logger = get_logger()
     try:
-        service = UserService()
+        service = AuthService()
         user = service.get_user(req.email)
         if not user:
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
@@ -42,3 +43,14 @@ async def login(req: LoginRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Login failed", "details": {"error": str(e)}})
+
+
+@router.post("/logout", response_model=AuthResponse, responses={401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
+async def logout(request: Request):
+    logger = get_logger()
+    try:
+        email = getattr(request.state, "user_email", None)
+        logger.info("user_logged_out", email=email)
+        return {"success": True, "message": "Logged out", "data": {"email": email, "logged_out": True}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Logout failed", "details": {"error": str(e)}})
