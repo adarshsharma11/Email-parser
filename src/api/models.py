@@ -124,6 +124,8 @@ class ConnectionResponse(APIResponse):
 
 class RegisterRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+    first_name: str = Field(..., description="User first name")
+    last_name: str = Field(..., description="User last name")
     email: str = Field(..., description="User email")
     password: str = Field(..., description="User password")
 
