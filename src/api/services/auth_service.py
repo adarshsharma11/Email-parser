@@ -51,19 +51,7 @@ class AuthService:
         )
 
         if existing.data:
-            update_data = {"password": encrypted}
-            if first_name is not None:
-                update_data["first_name"] = first_name
-            if last_name is not None:
-                update_data["last_name"] = last_name
-            (
-                self.supabase.client
-                .table("users")
-                .update(update_data)
-                .eq("email", email)
-                .execute()
-            )
-            return {"email": email, "password": encrypted, **({"first_name": first_name} if first_name is not None else {}), **({"last_name": last_name} if last_name is not None else {})}
+            raise ValueError("EMAIL_ALREADY_REGISTERED")
         else:
             insert_result = (
                 self.supabase.client

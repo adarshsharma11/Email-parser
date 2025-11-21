@@ -96,7 +96,6 @@ def create_app() -> FastAPI:
             f"{settings.api_prefix}/v1/health",
             f"{settings.api_prefix}/v1/auth/login",
             f"{settings.api_prefix}/v1/auth/register",
-            "/",
             f"{settings.api_prefix}/docs",
             f"{settings.api_prefix}/redoc",
             f"{settings.api_prefix}/openapi.json",

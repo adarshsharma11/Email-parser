@@ -17,6 +17,10 @@ async def register(req: RegisterRequest):
         token = create_token({"sub": req.email})
         logger.info("user_registered", email=req.email)
         return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email}}
+    except ValueError as ve:
+        if str(ve) == "EMAIL_ALREADY_REGISTERED":
+            raise HTTPException(status_code=400, detail={"message": "Email already registered"})
+        raise HTTPException(status_code=400, detail={"message": "Invalid registration data", "details": {"error": str(ve)}})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Registration failed", "details": {"error": str(e)}})
 
