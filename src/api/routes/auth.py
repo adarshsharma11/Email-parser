@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from fastapi import Request
-from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse
+from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse, ProfileUpdateRequest
 from ..dependencies import get_logger
 from ..services.auth_service import AuthService
 from ..security.jwt import create_token
@@ -42,7 +42,16 @@ async def login(req: LoginRequest):
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
         token = create_token({"sub": req.email})
         logger.info("user_logged_in", email=req.email)
-        return {"success": True, "message": "Logged in", "data": {"token": token, "email": req.email}}
+        return {
+            "success": True,
+            "message": "Logged in",
+            "data": {
+                "token": token,
+                "email": req.email,
+                "first_name": user.get("first_name"),
+                "last_name": user.get("last_name"),
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -58,3 +67,20 @@ async def logout(request: Request):
         return {"success": True, "message": "Logged out", "data": {"email": email, "logged_out": True}}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Logout failed", "details": {"error": str(e)}})
+
+
+@router.put("/profile", response_model=AuthResponse, responses={401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
+async def update_profile(req: ProfileUpdateRequest, request: Request):
+    logger = get_logger()
+    try:
+        email = getattr(request.state, "user_email", None)
+        if not email:
+            raise HTTPException(status_code=401, detail={"message": "Unauthorized"})
+        service = AuthService()
+        updated = service.update_profile(email, req.first_name, req.last_name)
+        logger.info("user_profile_updated", email=email)
+        return {"success": True, "message": "Profile updated", "data": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Profile update failed", "details": {"error": str(e)}})
