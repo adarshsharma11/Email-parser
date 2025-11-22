@@ -83,3 +83,24 @@ class AuthService:
         if result.data:
             return result.data[0]
         return None
+
+    def update_profile(self, email: str, first_name: str, last_name: str) -> Dict[str, Any]:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+
+        (
+            self.supabase.client
+            .table("users")
+            .update({"first_name": first_name, "last_name": last_name})
+            .eq("email", email)
+            .execute()
+        )
+
+        # Return updated data
+        user = self.get_user(email) or {"email": email}
+        return {
+            "email": user.get("email"),
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
+        }

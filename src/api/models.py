@@ -137,6 +137,11 @@ class LoginRequest(BaseModel):
 class AuthResponse(APIResponse):
     data: Dict[str, Any] = Field(..., description="Auth data including token")
 
+class ProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    first_name: str = Field(..., description="User first name")
+    last_name: str = Field(..., description="User last name")
+
 class DashboardMetrics(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     total_bookings: int = Field(...)
