@@ -20,7 +20,7 @@ def create_token(payload: Dict[str, Any], exp_seconds: Optional[int] = None) -> 
     secret = os.getenv("JWT_SECRET") or os.getenv("ENCRYPTION_SECRET") or "change-me"
     header = {"alg": "HS256", "typ": "JWT"}
     now = int(time.time())
-    exp = now + int(exp_seconds or int(os.getenv("JWT_EXP_SECONDS", "3600")))
+    exp = now + int(exp_seconds or int(os.getenv("JWT_EXP_SECONDS", "86400")))
     body = dict(payload)
     body.setdefault("iat", now)
     body.setdefault("exp", exp)
