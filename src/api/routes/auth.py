@@ -14,7 +14,7 @@ async def register(req: RegisterRequest):
     try:
         service = AuthService()
         saved = service.save_user(req.email, req.password, req.first_name, req.last_name)
-        token = create_token({"sub": req.email})
+        token = create_token({"sub": req.email}, exp_seconds=86400)
         logger.info("user_registered", email=req.email)
         return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email}}
     except ValueError as ve:
@@ -40,7 +40,7 @@ async def login(req: LoginRequest):
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
         if decrypted != req.password:
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
-        token = create_token({"sub": req.email})
+        token = create_token({"sub": req.email}, exp_seconds=86400)
         logger.info("user_logged_in", email=req.email)
         return {
             "success": True,
