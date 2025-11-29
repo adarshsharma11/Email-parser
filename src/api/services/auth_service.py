@@ -104,3 +104,17 @@ class AuthService:
             "first_name": user.get("first_name"),
             "last_name": user.get("last_name"),
         }
+
+    def update_password(self, email: str, password: str) -> bool:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+        encrypted = self.encrypt(password)
+        (
+            self.supabase.client
+            .table("users")
+            .update({"password": encrypted})
+            .eq("email", email)
+            .execute()
+        )
+        return True
