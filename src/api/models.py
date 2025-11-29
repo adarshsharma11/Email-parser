@@ -142,6 +142,15 @@ class ProfileUpdateRequest(BaseModel):
     first_name: str = Field(..., description="User first name")
     last_name: str = Field(..., description="User last name")
 
+class ForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    email: str = Field(..., description="User email for password reset")
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    token: str = Field(..., description="Password reset token")
+    new_password: str = Field(..., description="New password")
+
 class DashboardMetrics(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     total_bookings: int = Field(...)

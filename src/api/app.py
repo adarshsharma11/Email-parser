@@ -93,12 +93,10 @@ def create_app() -> FastAPI:
         path = request.url.path
         method = request.method
         open_paths = {
-            f"{settings.api_prefix}/v1/health",
             f"{settings.api_prefix}/v1/auth/login",
             f"{settings.api_prefix}/v1/auth/register",
-            f"{settings.api_prefix}/docs",
-            f"{settings.api_prefix}/redoc",
-            f"{settings.api_prefix}/openapi.json",
+            f"{settings.api_prefix}/v1/auth/forgot-password",
+            f"{settings.api_prefix}/v1/auth/reset-password",
         }
         if method == "OPTIONS" or any(path.startswith(p) for p in open_paths):
             return await call_next(request)

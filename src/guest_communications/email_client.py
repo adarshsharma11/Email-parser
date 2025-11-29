@@ -10,8 +10,9 @@ class EmailClient:
         self.username = os.getenv("SMTP_USER")
         self.password = os.getenv("SMTP_PASSWORD")
 
-    def send(self, to: str, subject: str, body: str):
-        msg = MIMEText(body, "plain")
+    def send(self, to: str, subject: str, body: str, html: bool = False):
+        subtype = "html" if html else "plain"
+        msg = MIMEText(body, subtype)
         msg["Subject"] = subject
         msg["From"] = self.username
         msg["To"] = to
