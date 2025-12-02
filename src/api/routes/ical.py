@@ -6,6 +6,7 @@ from ..services.property_service import PropertyService
 import logging
 
 router = APIRouter(tags=["iCal"])
+public_router = APIRouter(tags=["iCal"])
 
 # Initialize logger and Supabase client
 logger = logging.getLogger(__name__)
@@ -61,7 +62,6 @@ async def delete_property(property_id: str):
     return result
    
 
-@router.get("/property/{property_id}.ics")
 async def generate_ical_feed(property_id: str):
     """
     Generate iCal file for a given property.
@@ -76,3 +76,7 @@ async def generate_ical_feed(property_id: str):
         media_type="text/calendar",
         headers={"Content-Disposition": f"attachment; filename=\"{property_id}.ics\""}
     )
+
+# Expose ICS under versioned router and public router
+router.add_api_route("/property/{property_id}.ics", generate_ical_feed, methods=["GET"])
+public_router.add_api_route("/property/{property_id}.ics", generate_ical_feed, methods=["GET"])

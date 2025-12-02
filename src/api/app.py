@@ -98,7 +98,11 @@ def create_app() -> FastAPI:
             f"{settings.api_prefix}/v1/auth/forgot-password",
             f"{settings.api_prefix}/v1/auth/reset-password",
         }
-        if method == "OPTIONS" or any(path.startswith(p) for p in open_paths):
+        if (
+            method == "OPTIONS"
+            or any(path.startswith(p) for p in open_paths)
+            or (path.startswith("/property/") and path.endswith(".ics"))
+        ):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")
@@ -130,6 +134,12 @@ def create_app() -> FastAPI:
     app.include_router(
         ical.router,
         prefix=f"{settings.api_prefix}/v1"
+    )
+
+    # Public iCal .ics endpoint without api/v1 prefix
+    app.include_router(
+        ical.public_router,
+        prefix=""
     )
 
     app.include_router(

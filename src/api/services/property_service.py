@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from uuid import uuid4
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 from ...supabase_sync.supabase_client import SupabaseClient
 from ..models import APIResponse, ErrorResponse
@@ -161,9 +161,10 @@ class PropertyService:
         property_id = prop["id"]
         now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-        # Demo event times (UTC). Replace with actual booking data when available.
-        start = "20251110T120000Z"
-        end = "20251112T120000Z"
+        start_dt = datetime.now(timezone.utc).replace(year=2026, hour=12, minute=0, second=0, microsecond=0)
+        end_dt = start_dt + timedelta(days=2)
+        start = start_dt.strftime("%Y%m%dT%H%M%SZ")
+        end = end_dt.strftime("%Y%m%dT%H%M%SZ")
 
         # Derive a meaningful UID domain from configured base URL
         parsed = urlparse(api_config.base_url or "")
