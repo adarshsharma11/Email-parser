@@ -92,6 +92,7 @@ class CreateCrewRequest(BaseModel):
     phone: str = Field(..., description="Crew member phone number")
     property_id: Optional[str] = Field(None, description="Assigned property ID")
     role: Optional[str] = Field(None, description="Crew member role (e.g., cleaner, manager)")
+    category_id: Optional[int] = Field(None, description="Assigned category ID")
     active: bool = Field(default=True, description="Whether the crew member is active")
 
 
@@ -103,6 +104,18 @@ class CreateCrewResponse(APIResponse):
 class DeleteCrewResponse(APIResponse):
     """Response model for deleting a crew member."""
     data: Dict[str, Any] = Field(..., description="Deletion result")
+
+class UpdateCrewRequest(BaseModel):
+    """Request model for updating a crew member (partial update)."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    name: Optional[str] = Field(None, description="Crew member name")
+    email: Optional[str] = Field(None, description="Crew member email")
+    phone: Optional[str] = Field(None, description="Crew member phone number")
+    property_id: Optional[str] = Field(None, description="Assigned property ID")
+    role: Optional[str] = Field(None, description="Crew member role (e.g., cleaner, manager)")
+    category_id: Optional[int] = Field(None, description="Assigned category ID")
+    active: Optional[bool] = Field(None, description="Whether the crew member is active")
 
 class UserRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")

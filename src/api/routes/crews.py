@@ -3,7 +3,7 @@ Crew API endpoints.
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
-from ..models import CrewResponse, ErrorResponse, CreateCrewRequest, CreateCrewResponse, DeleteCrewResponse
+from ..models import CrewResponse, ErrorResponse, CreateCrewRequest, CreateCrewResponse, DeleteCrewResponse, UpdateCrewRequest
 from ..dependencies import get_crew_service
 from ..services.crew_service import CrewService
 
@@ -91,6 +91,55 @@ async def create_crew(
         return {
             "success": True,
             "message": "Crew member created successfully",
+            "data": crew
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Internal server error",
+                "error_code": "INTERNAL_ERROR",
+                "details": {"error": str(e)}
+            }
+        )
+
+
+@router.patch(
+    "/{crew_id}",
+    response_model=CreateCrewResponse,
+    summary="Update a crew member",
+    description="Update an existing crew member's details",
+    responses={
+        200: {"description": "Crew member updated successfully"},
+        500: {"description": "Internal server error", "model": ErrorResponse}
+    }
+)
+async def update_crew(
+    crew_data: UpdateCrewRequest,
+    crew_id: str = Path(..., description="ID of the crew member to update"),
+    crew_service: CrewService = Depends(get_crew_service)
+):
+    """
+    Update a crew member.
+
+    Args:
+        crew_id: ID of the crew member to update
+        crew_data: Data fields to update
+        crew_service: Injected crew service
+
+    Returns:
+        Updated crew member details
+
+    Raises:
+        HTTPException: If service returns an error
+    """
+    try:
+        crew = crew_service.update_crew(crew_id, crew_data.model_dump(exclude_unset=True))
+        
+        return {
+            "success": True,
+            "message": "Crew member updated successfully",
             "data": crew
         }
         

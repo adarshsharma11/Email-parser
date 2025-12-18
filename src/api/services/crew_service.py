@@ -6,7 +6,6 @@ from datetime import datetime
 import time
 
 from ...supabase_sync.supabase_client import SupabaseClient
-from ..models import APIResponse, ErrorResponse
 from ..config import settings
 from config.settings import app_config
 
@@ -52,6 +51,25 @@ class CrewService:
         # Fetch from Supabase
         crews = self.supabase_client.list_active_crews(property_id)
         
+        # Enrich with category details
+        try:
+            cat_ids = sorted({c.get("category_id") for c in crews if isinstance(c, dict) and c.get("category_id") is not None})
+            if cat_ids:
+                res = (
+                    self.supabase_client.client
+                    .table(app_config.categories_collection)
+                    .select("id,name,parent_id")
+                    .in_("id", cat_ids)
+                    .execute()
+                )
+                cat_map = {row.get("id"): row for row in (getattr(res, "data", []) or [])}
+                for c in crews:
+                    cid = c.get("category_id")
+                    if cid is not None:
+                        c["category"] = cat_map.get(cid)
+        except Exception:
+            pass
+        
         # Cache the result
         self._cache[cache_key] = (time.time(), crews)
         
@@ -81,7 +99,11 @@ class CrewService:
         
         if email or phone:
             # Query for existing crew members with same email or phone
-            query = self.supabase_client.client.table(app_config.cleaning_crews_collection).select('id', 'email', 'phone')
+            query = (
+                self.supabase_client.client
+                .table(app_config.cleaning_crews_collection)
+                .select('id', 'email', 'phone')
+            )
             
             if email and phone:
                 query = query.or_(f'email.eq.{email},phone.eq.{phone}')
@@ -107,7 +129,12 @@ class CrewService:
         filtered_data = {k: v for k, v in crew_data.items() if v is not None}
         
         # Create crew member in Supabase
-        result = self.supabase_client.client.table(app_config.cleaning_crews_collection).insert(filtered_data).execute()
+        result = (
+            self.supabase_client.client
+            .table(app_config.cleaning_crews_collection)
+            .insert(filtered_data)
+            .execute()
+        )
         
         # Clear cache since we added a new crew member
         self._cache.clear()
@@ -116,6 +143,36 @@ class CrewService:
             return result.data[0]
         else:
             raise Exception("Failed to create crew member")
+    
+    def update_crew(self, crew_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update an existing crew member.
+        """
+        # Ensure client is initialized
+        if not self.supabase_client.initialized:
+            if not self.supabase_client.initialize():
+                raise Exception("Failed to initialize Supabase client")
+        
+        # Update timestamp
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+        filtered = {k: v for k, v in update_data.items() if v is not None}
+        
+        # Perform update
+        result = (
+            self.supabase_client.client
+            .table(app_config.cleaning_crews_collection)
+            .update(filtered)
+            .eq("id", crew_id)
+            .execute()
+        )
+        
+        # Clear cache since data changed
+        self._cache.clear()
+        
+        if result.data:
+            return result.data[0]
+        else:
+            raise Exception(f"Crew member with ID {crew_id} not found")
     
     def delete_crew(self, crew_id: str) -> bool:
         """
@@ -136,7 +193,13 @@ class CrewService:
                 raise Exception("Failed to initialize Supabase client")
         
         # Delete crew member from Supabase
-        result = self.supabase_client.client.table(app_config.cleaning_crews_collection).delete().eq("id", crew_id).execute()
+        result = (
+            self.supabase_client.client
+            .table(app_config.cleaning_crews_collection)
+            .delete()
+            .eq("id", crew_id)
+            .execute()
+        )
         
         # Clear cache since we deleted a crew member
         self._cache.clear()
