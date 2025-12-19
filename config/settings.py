@@ -58,6 +58,7 @@ class AppConfig:
     cleaning_tasks_collection: str = "cleaning_tasks"
     cleaning_crews_collection: str = "cleaning_crews"
     properties_collection= "properties"
+    categories_collection: str = "category"
     users_collection: str = "user_credentials"
     auth_collection: str = "users"
     # Email processing settings

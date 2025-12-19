@@ -17,6 +17,7 @@ class PropertyService:
     def create_property(
         self,
         name: str,
+        address: str | None = None,
         vrbo_id: str | None = None,
         airbnb_id: str | None = None,
         booking_id: str | None = None,
@@ -37,6 +38,7 @@ class PropertyService:
             # Create property data without manual ID
             property_data = {
                 "name": name,
+                "address": address,
                 "vrbo_id": vrbo_id,
                 "airbnb_id": airbnb_id,
                 "booking_id": booking_id,

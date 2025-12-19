@@ -16,6 +16,7 @@ property_service = PropertyService()
 
 class PropertyCreate(BaseModel):
     name: str
+    address: str | None = None
     vrbo_id: str | None = None
     airbnb_id: str | None = None
     booking_id: str | None = None
@@ -28,6 +29,7 @@ async def create_property(property_data: PropertyCreate):
     """
     result = property_service.create_property(
         name=property_data.name,
+        address=property_data.address,
         vrbo_id=property_data.vrbo_id,
         airbnb_id=property_data.airbnb_id,
         booking_id=property_data.booking_id,
