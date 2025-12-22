@@ -70,27 +70,6 @@ class BookingService:
             
             # Update calendar blocks
             try:
-                # 1. Update internal calendar via Supabase (already done via booking creation)
-                
-                # 2. Block dates on external calendar (Google Calendar)
-                # We need a calendar client for this. 
-                # Ideally, we should inject this or initialize it.
-                # For now, importing here to avoid circular deps if not in dependencies
-                from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                calendar_client = GoogleCalendarClient()
-                
-                if request.property_name and request.check_in_date and request.check_out_date:
-                     block_event = calendar_client.block_dates(
-                        property_id=request.property_name,
-                        check_in=request.check_in_date,
-                        check_out=request.check_out_date
-                    )
-                     if block_event:
-                         self.logger.info(f"Blocked dates on Google Calendar: {block_event}")
-
-                # Simulate a small delay for user experience or external call
-                await asyncio.sleep(0.5)
-                
                 yield json.dumps({
                     "step": "calendar",
                     "status": "completed",
