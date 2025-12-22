@@ -67,21 +67,76 @@ class Notifier:
         """
         try:
             msg = f"Cleaning task scheduled for {task['property_id']} on {task['scheduled_date']}. Please confirm."
+            
+            # Debug: Log crew contact info
+            crew_name = crew.get("name", "Unknown")
+            crew_email = crew.get("email")
+            crew_phone = crew.get("phone")
+            
+            self.logger.info("Starting crew notification", 
+                           task_id=task.get('id'), 
+                           crew_name=crew_name,
+                           crew_email=crew_email, 
+                           crew_phone=crew_phone,
+                           has_email=bool(crew_email),
+                           has_phone=bool(crew_phone))
+
             # Send SMS if phone exists
-            if crew.get("phone"):
-                self.sms.send(to=crew["phone"], body=msg)
+            sms_success = False
+            if crew_phone:
+                try:
+                    self.logger.info("Sending SMS to crew", crew_name=crew_name, phone=crew_phone)
+                    self.sms.send(to=crew_phone, body=msg)
+                    sms_success = True
+                    self.logger.info("SMS sent successfully", crew_name=crew_name)
+                except Exception as e:
+                    self.logger.error("SMS failed", crew_name=crew_name, phone=crew_phone, error=str(e))
+                    sms_success = False
 
             # Send email if crew email exists
-            if crew.get("email"):
-                subject = f"Cleaning Assignment – {task['property_id']} on {task['scheduled_date']}"
-                body = f"Hi {crew.get('name','')}<br/><br/>{msg}<br/><br/>Task ID: {task['id']}"
-                self.email.send(to=crew["email"], subject=subject, body=body)
+            email_success = False
+            if crew_email:
+                try:
+                    subject = f"Cleaning Assignment – {task['property_id']} on {task['scheduled_date']}"
+                    body = f"Hi {crew_name}<br/><br/>{msg}<br/><br/>Task ID: {task['id']}"
+                    
+                    self.logger.info("Sending email to crew", 
+                                   crew_name=crew_name, 
+                                   email=crew_email, 
+                                   subject=subject)
+                    self.email.send(to=crew_email, subject=subject, body=body)
+                    email_success = True
+                    self.logger.info("Email sent successfully", crew_name=crew_name, email=crew_email)
+                except Exception as e:
+                    self.logger.error("Email failed", 
+                                    crew_name=crew_name, 
+                                    email=crew_email, 
+                                    error=str(e),
+                                    smtp_server=self.email.smtp_server,
+                                    smtp_port=self.email.smtp_port,
+                                    has_smtp_user=bool(self.email.username))
+                    email_success = False
 
-            # Optionally add calendar event for crew via calendar service
-            # if include_calendar_invite and self.calendar and crew.get("email"):
-            #     event_id = self.calendar.add_cleaning_event(crew, task)
-            self.logger.info("Cleaning notification sent", task_id=task['id'], crew=crew.get('name'))
-            return True
+            # Report overall success
+            if sms_success or email_success:
+                self.logger.info("Cleaning notification sent successfully", 
+                               task_id=task['id'], 
+                               crew_name=crew_name,
+                               sms_success=sms_success,
+                               email_success=email_success)
+                return True
+            else:
+                self.logger.error("Failed to send any notifications", 
+                                task_id=task['id'], 
+                                crew_name=crew_name,
+                                sms_success=sms_success,
+                                email_success=email_success)
+                return False
+                
         except Exception as e:
-            self.logger.error("Failed to notify crew", error=str(e), task_id=task.get('id'))
+            self.logger.error("Critical error in notify_cleaning_task", 
+                            error=str(e), 
+                            task_id=task.get('id'),
+                            crew_name=crew.get('name'),
+                            error_type=type(e).__name__)
             return False

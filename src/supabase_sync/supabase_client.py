@@ -210,6 +210,29 @@ class SupabaseClient:
             self.logger.error("Failed to fetch active crews", error=str(e))
             return []
 
+    def get_single_crew_by_category(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single active crew by category ID (global - ignores property_id)."""
+        try:
+            if not self.initialized and not self.initialize():
+                return None
+            
+            # Build query: active crews with matching category_id (global, no property filtering)
+            # Explicitly select all fields including email and phone for notifications
+            query = self.client.table(app_config.cleaning_crews_collection).select("id,name,email,phone,category_id,active,property_id").eq("active", True).eq("category_id", category_id)
+
+            resp = query.execute()
+            
+            if resp.data:
+                crew = resp.data[0]
+                # Ensure email and phone are present for notifications
+                if not crew.get("email") or not crew.get("phone"):
+                    self.logger.warning("Crew found but missing email or phone", crew_id=crew.get("id"), email=crew.get("email"), phone=crew.get("phone"))
+                return crew
+            return None
+        except Exception as e:
+            self.logger.error("Failed to fetch crew by category", category_id=category_id, error=str(e))
+            return None
+
 
     def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: date, crew_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:

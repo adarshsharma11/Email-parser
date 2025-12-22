@@ -31,6 +31,50 @@ class CrewService:
         timestamp, _ = self._cache[cache_key]
         return (time.time() - timestamp) < self._cache_ttl
     
+    def get_single_crew_by_category(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a single active crew member by category ID (global - ignores property_id).
+        
+        Args:
+            category_id: Category ID to filter by
+            
+        Returns:
+            Single crew member with contact info or None if not found
+        """
+        # Fetch from Supabase
+        crew = self.supabase_client.get_single_crew_by_category(category_id)
+        
+        # Enrich with category details
+        if crew and isinstance(crew, dict) and crew.get("category_id"):
+            try:
+                res = (
+                    self.supabase_client.client
+                    .table(app_config.categories_collection)
+                    .select("id,name,parent_id,email,phone")
+                    .eq("id", crew.get("category_id"))
+                    .execute()
+                )
+                if hasattr(res, "data") and res.data:
+                    crew["category"] = res.data[0]
+            except Exception:
+                pass
+        
+        # Validate that crew has necessary contact information for notifications
+        if crew and isinstance(crew, dict):
+            email = crew.get("email")
+            phone = crew.get("phone")
+            if not email or not phone:
+                self.logger.warning(
+                    "Crew found but missing notification contact info",
+                    crew_id=crew.get("id"),
+                    email=email,
+                    phone=phone,
+                    has_email=bool(email),
+                    has_phone=bool(phone)
+                )
+        
+        return crew
+
     def get_active_crews(self, property_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get active cleaning crews, optionally filtered by property.
