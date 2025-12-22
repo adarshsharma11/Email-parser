@@ -133,7 +133,8 @@ class PropertyService:
             }
 
         except Exception as e:
-            self.logger.error(f"Error fetching properties: {str(e)}")
+            # Note: logger might not be available here, using print for now
+            print(f"Error fetching properties: {str(e)}")
             return {"success": False, "error": str(e)}  
 
     def get_property_by_id(self, property_id: str) -> Dict[str, Any] | None:
@@ -151,10 +152,55 @@ class PropertyService:
             return result.data[0]
         return None
 
+    def get_bookings_by_property(self, property_id: str) -> list:
+        """
+        Fetch all bookings for a specific property.
+        
+        Args:
+            property_id: Property ID to search for
+            
+        Returns:
+            List of booking dictionaries
+        """
+        try:
+            if not self.supabase_client.initialized:
+                if not self.supabase_client.initialize():
+                    return []
+            
+            # Try to fetch bookings by property name (common pattern in the codebase)
+            result = (
+                self.supabase_client.client
+                .table(app_config.bookings_collection)
+                .select("*")
+                .eq("property_name", property_id)
+                .order("check_in_date", desc=True)
+                .execute()
+            )
+            
+            bookings = result.data if result.data else []
+            
+            # If no bookings found by property_name, try by property_id
+            if not bookings:
+                result = (
+                    self.supabase_client.client
+                    .table(app_config.bookings_collection)
+                    .select("*")
+                    .eq("property_id", property_id)
+                    .order("check_in_date", desc=True)
+                    .execute()
+                )
+                bookings = result.data if result.data else []
+            
+            return bookings
+            
+        except Exception as e:
+            print(f"Error fetching bookings for property {property_id}: {e}")
+            return []
+
     def generate_ical_feed(self, prop: Dict[str, Any]) -> str:
         """
-        Generate valid iCal content for the property.
-
+        Generate valid iCal content for the property with actual bookings.
+        
         Notes:
         - Lines must not have leading spaces; in iCalendar, a leading space indicates
           a folded continuation line, which would corrupt properties.
@@ -163,32 +209,54 @@ class PropertyService:
         property_id = prop["id"]
         now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-        start_dt = datetime.now(timezone.utc).replace(year=2026, hour=12, minute=0, second=0, microsecond=0)
-        end_dt = start_dt + timedelta(days=2)
-        start = start_dt.strftime("%Y%m%dT%H%M%SZ")
-        end = end_dt.strftime("%Y%m%dT%H%M%SZ")
-
         # Derive a meaningful UID domain from configured base URL
         parsed = urlparse(api_config.base_url or "")
         uid_domain = (parsed.hostname or "example.com").strip()
-
         prodid = f"-//{uid_domain}//Booking Calendar//EN"
 
+        # Fetch actual bookings for this property
+        bookings = self.get_bookings_by_property(property_id)
+        
         lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
             f"PRODID:{prodid}",
             "CALSCALE:GREGORIAN",
             "METHOD:PUBLISH",
-            "BEGIN:VEVENT",
-            f"UID:{property_id}@{uid_domain}",
-            f"DTSTAMP:{now}",
-            f"SUMMARY:Sample Booking for {prop['name']}",
-            f"DTSTART:{start}",
-            f"DTEND:{end}",
-            "END:VEVENT",
-            "END:VCALENDAR",
         ]
+
+        # Add booking events
+        for booking in bookings:
+            try:
+                # Parse booking dates
+                check_in = datetime.fromisoformat(booking['check_in_date'].replace('Z', '+00:00'))
+                check_out = datetime.fromisoformat(booking['check_out_date'].replace('Z', '+00:00'))
+                
+                # Format dates for iCal
+                start = check_in.strftime("%Y%m%dT%H%M%SZ")
+                end = check_out.strftime("%Y%m%dT%H%M%SZ")
+                
+                # Create summary with guest name if available
+                guest_name = booking.get('guest_name', 'Guest')
+                reservation_id = booking.get('reservation_id', 'Unknown')
+                summary = f"Booking - {guest_name} ({reservation_id})"
+                
+                lines.extend([
+                    "BEGIN:VEVENT",
+                    f"UID:{reservation_id}@{uid_domain}",
+                    f"DTSTAMP:{now}",
+                    f"SUMMARY:{summary}",
+                    f"DTSTART:{start}",
+                    f"DTEND:{end}",
+                    f"DESCRIPTION:Guest: {guest_name}\\nPlatform: {booking.get('platform', 'Unknown')}\\nReservation ID: {reservation_id}",
+                    "END:VEVENT",
+                ])
+            except Exception as e:
+                # Log error but continue with other bookings
+                print(f"Error processing booking {booking.get('reservation_id', 'unknown')}: {e}")
+                continue
+
+        lines.append("END:VCALENDAR")
 
         # Join with CRLF and ensure trailing newline
         return "\r\n".join(lines) + "\r\n"
