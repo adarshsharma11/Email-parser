@@ -98,7 +98,39 @@ class CreateCrewRequest(BaseModel):
 
 class CreateCrewResponse(APIResponse):
     """Response model for creating a crew member."""
-    data: Dict[str, Any] = Field(..., description="Created crew member details")
+    data: Dict[str, Any] = Field(..., description="Created crew member data")
+
+
+class BookingServiceItem(BaseModel):
+    """Model for a service added to a booking."""
+    service_id: int = Field(..., description="Service Category ID")
+    service_date: datetime = Field(..., description="Date of the service")
+    time: str = Field(..., description="Time of the service")
+
+
+class CreateBookingRequest(BaseModel):
+    """Request model for creating a booking with services."""
+    reservation_id: str = Field(..., description="Reservation ID")
+    platform: Platform = Field(..., description="Booking platform")
+    guest_name: str = Field(..., description="Guest name")
+    guest_phone: Optional[str] = Field(None, description="Guest phone number")
+    guest_email: Optional[str] = Field(None, description="Guest email")
+    check_in_date: datetime = Field(..., description="Check-in date")
+    check_out_date: datetime = Field(..., description="Check-out date")
+    property_id: Optional[str] = Field(None, description="Property ID")
+    property_name: Optional[str] = Field(None, description="Property name")
+    number_of_guests: Optional[int] = Field(None, description="Number of guests")
+    total_amount: Optional[float] = Field(None, description="Total amount")
+    currency: Optional[str] = Field(None, description="Currency")
+    booking_date: Optional[datetime] = Field(None, description="Booking date")
+    email_id: Optional[str] = Field(None, description="Email ID")
+    raw_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Raw booking data")
+    services: Optional[List[BookingServiceItem]] = Field(default_factory=list, description="List of services to add")
+
+
+class CreateBookingResponse(APIResponse):
+    """Response model for creating a booking."""
+    data: Dict[str, Any] = Field(..., description="Created booking details")
 
 
 class DeleteCrewResponse(APIResponse):

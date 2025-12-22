@@ -2,6 +2,6 @@
 API routes and endpoints.
 """
 
-from . import bookings, health, crews
+from . import bookings, health, crews, service_categories
 
-__all__ = ["bookings", "health", "crews"]
+__all__ = ["bookings", "health", "crews", "service_categories"]

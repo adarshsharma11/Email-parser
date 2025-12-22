@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import time
 
 from ...supabase_sync.supabase_client import SupabaseClient
-from ..models import BookingSummary, BookingStatsResponse, ErrorResponse
+from ..models import BookingSummary, BookingStatsResponse, ErrorResponse, CreateBookingRequest, CreateBookingResponse
 from ..config import settings
 from ...guest_communications.notifier import Notifier
 from ...utils.models import BookingData, Platform
@@ -21,6 +21,53 @@ class BookingService:
         self._cache = {}
         self._cache_ttl = settings.cache_ttl_seconds
     
+    def create_booking(self, request: CreateBookingRequest) -> CreateBookingResponse:
+        """
+        Create a new booking with services.
+        
+        Args:
+            request: Booking creation request with services
+            
+        Returns:
+            CreateBookingResponse with created booking data
+        """
+        try:
+            self.logger.info("Creating new booking", reservation_id=request.reservation_id)
+            
+            # Prepare booking payload
+            booking_dict = request.model_dump(exclude={"services"})
+            
+            # Convert platform enum to string if needed (model_dump might handle it if mode='json')
+            # But we are passing to a client that expects dicts.
+            # Platform is an Enum in the model.
+            if "platform" in booking_dict and hasattr(booking_dict["platform"], "value"):
+                booking_dict["platform"] = booking_dict["platform"].value
+            
+            # Prepare services
+            services_list = []
+            if request.services:
+                for svc in request.services:
+                    services_list.append(svc.model_dump())
+            
+            # Call Supabase client
+            result = self.supabase_client.create_booking_with_services(booking_dict, services_list)
+            
+            return CreateBookingResponse(
+                success=True,
+                message="Booking created successfully",
+                data=result
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to create booking: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            # CreateBookingResponse requires data field.
+            return CreateBookingResponse(
+                success=False,
+                message=error_msg,
+                data={} 
+            )
+
     def get_booking_statistics(self) -> BookingStatsResponse:
         """
         Get booking statistics from Supabase with caching.

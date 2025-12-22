@@ -5,12 +5,49 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse
+from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse
 from ..dependencies import get_booking_service
 from ..services.booking_service import BookingService
 
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
+
+
+@router.post(
+    "",
+    response_model=CreateBookingResponse,
+    summary="Create a new booking",
+    description="Create a new booking with optional services",
+    responses={
+        200: {"description": "Booking created successfully"},
+        500: {"description": "Internal server error", "model": ErrorResponse}
+    }
+)
+async def create_booking(
+    request: CreateBookingRequest,
+    booking_service: BookingService = Depends(get_booking_service)
+) -> CreateBookingResponse:
+    """
+    Create a new booking.
+    
+    Args:
+        request: Booking creation request
+        booking_service: Injected booking service
+        
+    Returns:
+        Created booking response
+    """
+    response = booking_service.create_booking(request)
+    if not response.success:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": response.message,
+                "error_code": "CREATION_FAILED",
+                "details": {}
+            }
+        )
+    return response
 
 
 @router.get(
