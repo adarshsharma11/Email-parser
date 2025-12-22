@@ -1,16 +1,66 @@
 """
 Booking API endpoints.
 """
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse
+from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse
 from ..dependencies import get_booking_service
 from ..services.booking_service import BookingService
 
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
+
+
+@router.post(
+    "",
+    response_model=Union[CreateBookingResponse, None],
+    summary="Create a new booking",
+    description="Create a new booking with optional services. Use stream=true for real-time progress updates.",
+    responses={
+        200: {"description": "Booking created successfully"},
+        500: {"description": "Internal server error", "model": ErrorResponse}
+    }
+)
+async def create_booking(
+    request: CreateBookingRequest,
+    stream: bool = Query(False, description="Stream progress updates via NDJSON"),
+    booking_service: BookingService = Depends(get_booking_service)
+):
+    """
+    Create a new booking.
+    
+    Args:
+        request: Booking creation request
+        stream: Whether to stream progress updates (default: False)
+        booking_service: Injected booking service
+        
+    Returns:
+        Created booking response or StreamingResponse
+    """
+    # Force boolean conversion if string "true" is passed
+    if str(stream).lower() == 'true':
+        stream = True
+        
+    if stream:
+        return StreamingResponse(
+            booking_service.create_booking_process(request),
+            media_type="application/x-ndjson"
+        )
+        
+    response = booking_service.create_booking(request)
+    if not response.success:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": response.message,
+                "error_code": "CREATION_FAILED",
+                "details": {}
+            }
+        )
+    return response
 
 
 @router.get(

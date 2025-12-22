@@ -124,6 +124,68 @@ class SupabaseClient:
             )
             return SyncResult(success=False, error_message=str(e), reservation_id=booking_data.reservation_id)
 
+    def create_booking_with_services(self, booking_payload: Dict[str, Any], services: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create a booking and associated services."""
+        try:
+            if not self.initialized and not self.initialize():
+                raise Exception("Supabase client not initialized")
+
+            # Ensure timestamps
+            if "created_at" not in booking_payload:
+                booking_payload["created_at"] = datetime.utcnow().isoformat()
+            booking_payload["updated_at"] = datetime.utcnow().isoformat()
+            
+            # Serialize payload
+            serialized_payload = self._serialize_payload(booking_payload)
+            
+            # Upsert booking and get the result to obtain the ID
+            res = (
+                self.client.table(app_config.bookings_collection)
+                .upsert(serialized_payload, on_conflict="reservation_id")
+                .execute()
+            )
+            
+            booking_data = getattr(res, "data", [])
+            booking_record = booking_data[0] if booking_data else None
+            
+            # If we don't have the ID, fetch the booking
+            if not booking_record or "id" not in booking_record:
+                self.logger.info("Upsert didn't return ID, fetching booking...", reservation_id=booking_payload["reservation_id"])
+                booking_record = self.get_booking_by_reservation_id(booking_payload["reservation_id"])
+                
+            if not booking_record:
+                raise Exception("Failed to retrieve created/updated booking")
+            
+            booking_db_id = booking_record.get("id")
+            # Fallback to reservation_id if id is missing
+            if not booking_db_id:
+                booking_db_id = booking_payload["reservation_id"]
+            
+            # Insert services if any
+            if services:
+                service_payloads = []
+                for svc in services:
+                    # serialize service date if needed
+                    svc_date = svc["service_date"]
+                    if isinstance(svc_date, datetime) or isinstance(svc_date, date):
+                        svc_date = svc_date.isoformat()
+                        
+                    service_payloads.append({
+                        "booking_id": booking_db_id if booking_db_id else booking_payload["reservation_id"],
+                        "service_id": svc["service_id"],
+                        "service_date": svc_date,
+                        "time": svc["time"]
+                    })
+                
+                if service_payloads:
+                    self.client.table("booking_service").insert(service_payloads).execute()
+            
+            return booking_record
+
+        except Exception as e:
+            self.logger.error("Failed to create booking with services", error=str(e))
+            raise e
+
     def sync_bookings(self, bookings: List[BookingData], dry_run: bool = False) -> List[SyncResult]:
         results: List[SyncResult] = []
         for b in bookings:
