@@ -14,6 +14,8 @@ class ServiceCategoryCreate(BaseModel):
     time: Optional[str] = Field(None, description="Duration or time")
     price: Optional[float] = Field(None, description="Default price")
     status: bool = Field(True, description="Active status")
+    email: Optional[str] = Field(None, description="Provider email for notifications")
+    phone: Optional[str] = Field(None, description="Provider phone for notifications")
 
 class ServiceCategoryUpdate(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -21,6 +23,8 @@ class ServiceCategoryUpdate(BaseModel):
     time: Optional[str] = Field(None)
     price: Optional[float] = Field(None)
     status: Optional[bool] = Field(None)
+    email: Optional[str] = Field(None)
+    phone: Optional[str] = Field(None)
 
 class ServiceCategoryStatusUpdate(BaseModel):
     status: bool = Field(..., description="New status value")

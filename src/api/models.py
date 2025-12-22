@@ -124,7 +124,7 @@ class CreateBookingRequest(BaseModel):
     currency: Optional[str] = Field(None, description="Currency")
     booking_date: Optional[datetime] = Field(None, description="Booking date")
     email_id: Optional[str] = Field(None, description="Email ID")
-    raw_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Raw booking data")
+    raw_data: Optional[Dict[str, Any] | str] = Field(None, description="Raw booking data")
     services: Optional[List[BookingServiceItem]] = Field(default_factory=list, description="List of services to add")
 
 
