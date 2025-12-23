@@ -133,61 +133,46 @@ class BookingService:
             
             try:
                 if request.property_name: # Changed from property_id to property_name as per main.py usage
-                    # Use existing logic to pick crew
-                    # For now, we'll fetch active crews for property
-                    # If property_id is not set but name is, we might need to resolve it.
-                    # Assuming property_id in request matches what crew service expects.
-                    
-                    # If we don't have a property_id but have a name, we might need to lookup.
-                    # But request has property_id optional.
-                    
-                    target_property_id = request.property_id
-                    if not target_property_id and request.property_name:
-                         # Try to find property by name if ID is missing (simplified)
-                         # In real app, we should have ID.
-                         pass
-
-                    crews = self.crew_service.get_active_crews(target_property_id)
+                    # Use new logic to get single crew with category_id = 2 (global)
+                    # Fetch ONE crew with category_id = 2 (ignores property_id)
+                    crew = self.crew_service.get_single_crew_by_category(category_id=2)
                     notified_count = 0
                     
-                    # Calculate cleaning date (usually checkout date)
-                    scheduled_date = request.check_out_date
-                    
-                    # Create cleaning task
-                    # We need to call supabase to create task first
-                    task_data = {
-                        "booking_id": request.reservation_id,
-                        "property_id": request.property_name or "Unknown", # main.py uses property_name
-                        "scheduled_date": scheduled_date.isoformat(),
-                        "status": "pending"
-                    }
-                    
-                    # Insert task (mocking specific method or using generic insert)
-                    # self.supabase_client.create_cleaning_task(...) 
-                    # For now, we will just construct the task object for notification
-                    # In production, ensure task is saved to DB.
-                    
-                    # Notify crews
-                    for crew in crews:
-                         # Logic from main.py: 
-                         # task = self.firestore_client.create_cleaning_task(...)
-                         # notify_success = self.notifier.notify_cleaning_task(crew, task)
-                         
-                         # We'll use a local task dict for notification
-                         task_for_notify = {
-                             "id": f"task_{request.reservation_id}", # Temporary ID
-                             "booking_id": request.reservation_id,
-                             "property_id": request.property_name,
-                             "scheduled_date": scheduled_date
-                         }
-                         
-                         if self.notifier.notify_cleaning_task(crew, task_for_notify):
-                             notified_count += 1
-                             
-                             # Add to Google Calendar (Crew)
-                             from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                             calendar_client = GoogleCalendarClient()
-                             calendar_client.add_cleaning_event(crew, task_for_notify)
+                    if crew:
+                        # Calculate cleaning date (usually checkout date)
+                        scheduled_date = request.check_out_date
+                        
+                        # Create cleaning task in database
+                        task = self.supabase_client.create_cleaning_task(
+                            booking_id=request.reservation_id,
+                            property_id=request.property_name,
+                            scheduled_date=scheduled_date,
+                            crew_id=crew.get("id")
+                        )
+                        
+                        if task:
+                            # Prepare task data for notification
+                            task_for_notify = {
+                                "id": task.get("id", f"task_{request.reservation_id}"),
+                                "booking_id": request.reservation_id,
+                                "property_id": request.property_name,
+                                "scheduled_date": scheduled_date
+                            }
+                            
+                            # Send notification to crew's email and phone
+                            if self.notifier.notify_cleaning_task(crew, task_for_notify):
+                                notified_count = 1
+                                
+                                # Add to Google Calendar (Crew)
+                                from ...calendar_integration.google_calendar_client import GoogleCalendarClient
+                                calendar_client = GoogleCalendarClient()
+                                calendar_client.add_cleaning_event(crew, task_for_notify)
+                            else:
+                                self.logger.warning(f"Notification failed for crew {crew.get('name', crew.get('id'))}")
+                        else:
+                            self.logger.warning("Failed to create cleaning task in database")
+                    else:
+                        self.logger.warning(f"No crew found with category_id=2 for property {request.property_name}")
                     
                     yield json.dumps({
                         "step": "crew_notification",
