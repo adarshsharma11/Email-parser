@@ -74,7 +74,7 @@ async def create_booking(
     }
 )
 async def get_bookings(
-    platform: Optional[Platform] = Query(None, description="Filter by specific platform"),
+    platform: Optional[str] = Query(None, description="Filter by specific platform"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     limit: int = Query(10, ge=1, le=100, description="Number of bookings per page"),
     booking_service: BookingService = Depends(get_booking_service)
@@ -95,8 +95,18 @@ async def get_bookings(
         HTTPException: If service returns an error
     """
     try:
+        platform_value = None
+        if platform:
+            try:
+                platform_value = Platform(platform.lower()).value
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid platform: {platform}. Allowed values: {[p.value for p in Platform]}"
+                )
+
         bookings = booking_service.get_bookings_paginated(
-            platform=platform.value if platform else None,
+            platform=platform_value,
             page=page,
             limit=limit
         )
@@ -107,6 +117,8 @@ async def get_bookings(
             "data": bookings
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
