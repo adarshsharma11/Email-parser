@@ -60,6 +60,13 @@ def get_dashboard_service():
     return DashboardService()
 
 
+@lru_cache(maxsize=1)
+def get_activity_rule_service():
+    """Get activity rule service instance with caching."""
+    from .services.activity_rule_service import ActivityRuleService
+    return ActivityRuleService(get_supabase_client(), get_logger())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
