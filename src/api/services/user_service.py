@@ -119,7 +119,7 @@ class UserService:
         result = (
             self.supabase.client
             .table(app_config.users_collection)
-            .select("email,status")
+            .select("email,status,platform")
             .range(offset, offset + max(0, limit) - 1)
             .execute()
         )
