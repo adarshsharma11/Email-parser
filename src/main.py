@@ -15,6 +15,10 @@ from .utils.models import EmailData, BookingData, Platform, ProcessingResult, Sy
 from .utils.logger import setup_logger, BookingLogger
 from config.settings import app_config
 from .api.services.user_service import UserService
+from .api.app import create_app
+
+# Create FastAPI app instance for uvicorn
+app = create_app()
 
 dummy_booking = BookingData(
     reservation_id="123",

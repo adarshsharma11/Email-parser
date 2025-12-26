@@ -204,3 +204,50 @@ class DashboardMetrics(BaseModel):
 
 class DashboardResponse(APIResponse):
     data: DashboardMetrics | Dict[str, Any] = Field(..., description="Dashboard metrics")
+
+
+# Activity Rule Models
+
+class ActivityRuleBase(BaseModel):
+    """Base model for Activity Rule."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    rule_name: Optional[str] = Field(None, description="Name of the rule")
+    slug_name: Optional[str] = Field(None, description="Slug name of the rule")
+    condition: Optional[Dict[str, Any]] = Field(None, description="Rule conditions in JSON format")
+    priority: Optional[str] = Field(None, description="Priority level")
+    description: Optional[str] = Field(None, description="Description of the rule")
+    status: Optional[bool] = Field(None, description="Status of the rule (enabled/disabled)")
+
+class CreateActivityRuleRequest(ActivityRuleBase):
+    """Request model for creating an activity rule."""
+    rule_name: str = Field(..., description="Name of the rule")
+    # Other fields remain optional as per the schema, but usually creation requires some valid data.
+    # The SQL schema says columns are nullable.
+
+class UpdateActivityRuleRequest(ActivityRuleBase):
+    """Request model for updating an activity rule."""
+    pass
+
+class ActivityRuleResponse(ActivityRuleBase):
+    """Response model for activity rule."""
+    id: int = Field(..., description="Unique identifier")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Update timestamp")
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime) -> str:
+        return created_at.isoformat()
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, updated_at: Optional[datetime]) -> Optional[str]:
+        return updated_at.isoformat() if updated_at else None
+
+class ActivityRuleListResponse(APIResponse):
+    """Response model for list of activity rules."""
+    data: List[ActivityRuleResponse] = Field(..., description="List of activity rules")
+
+class ActivityRuleDetailResponse(APIResponse):
+    """Response model for a single activity rule."""
+    data: ActivityRuleResponse = Field(..., description="Activity rule details")
+

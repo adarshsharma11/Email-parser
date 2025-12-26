@@ -29,8 +29,8 @@ class SupabaseClient:
             if self.initialized:
                 return True
 
-            # Ensure we call get_auth_key() if it's a function
-            auth_key = supabase_config.get_auth_key() if callable(supabase_config.get_auth_key) else supabase_config.get_auth_key
+            # Call get_auth_key() method to get the authentication key
+            auth_key = supabase_config.get_auth_key()
 
             if not supabase_config.url or not auth_key:
                 self.logger.error("Supabase configuration missing", url=bool(supabase_config.url))
