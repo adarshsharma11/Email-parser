@@ -251,3 +251,28 @@ class ActivityRuleDetailResponse(APIResponse):
     """Response model for a single activity rule."""
     data: ActivityRuleResponse = Field(..., description="Activity rule details")
 
+
+class ActivityRuleLog(BaseModel):
+    """Model for activity rule execution log."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int = Field(..., description="Unique identifier of the log")
+    rule_name: str = Field(..., description="Name of the rule")
+    outcome: str = Field(..., description="Outcome of the rule execution (success/failed)")
+    created_at: datetime = Field(..., description="Timestamp of the log")
+    updated_at: Optional[datetime] = Field(None, description="Update timestamp of the log")
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime) -> str:
+        # Format: 27/01/2025, 10:00:00
+        return created_at.strftime("%d/%m/%Y, %H:%M:%S")
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, updated_at: Optional[datetime]) -> Optional[str]:
+        return updated_at.strftime("%d/%m/%Y, %H:%M:%S") if updated_at else None
+
+
+class ActivityRuleLogListResponse(APIResponse):
+    """Response model for list of activity rule logs."""
+    data: List[ActivityRuleLog] = Field(..., description="List of activity rule logs")
+

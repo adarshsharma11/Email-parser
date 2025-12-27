@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from ..dependencies import get_automation_service
 from ..services.automation_service import AutomationService
+from ..models import ActivityRuleLogListResponse
 
 router = APIRouter(
     prefix="/automation",
@@ -35,6 +36,22 @@ async def get_rules(
             {"name": name, "enabled": enabled}
             for name, enabled in rules.items()
         ]
+    }
+
+@router.get(
+    "/logs",
+    response_model=ActivityRuleLogListResponse,
+    summary="Get automation logs",
+    description="Get the execution logs of automation rules"
+)
+async def get_automation_logs(
+    service: AutomationService = Depends(get_automation_service)
+):
+    logs = service.get_logs()
+    return {
+        "success": True,
+        "message": "Automation logs retrieved successfully",
+        "data": logs
     }
 
 @router.post(

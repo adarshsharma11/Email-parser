@@ -43,3 +43,11 @@ class AutomationService:
             for r in rules
             if r.slug_name
         }
+
+    def log_rule_execution(self, rule_name: str, outcome: str):
+        """Log the execution of a rule."""
+        self.activity_rule_service.log_activity(rule_name, outcome)
+
+    def get_logs(self):
+        """Get execution logs."""
+        return self.activity_rule_service.get_logs()

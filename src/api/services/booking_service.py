@@ -14,6 +14,7 @@ from ...guest_communications.notifier import Notifier
 from ...utils.models import BookingData, Platform
 from .crew_service import CrewService
 from .automation_service import AutomationService
+from .activity_rule_service import ActivityRuleService
 
 
 class BookingService:
@@ -26,7 +27,10 @@ class BookingService:
         self._cache_ttl = settings.cache_ttl_seconds
         self.notifier = Notifier()
         self.crew_service = CrewService()
-        self.automation_service = AutomationService()
+        
+        # Initialize AutomationService with dependencies
+        activity_rule_service = ActivityRuleService(supabase_client, logger)
+        self.automation_service = AutomationService(activity_rule_service)
     
     async def create_booking_process(self, request: CreateBookingRequest) -> AsyncGenerator[str, None]:
         """
@@ -114,6 +118,8 @@ class BookingService:
                     if request.guest_phone:
                         self.notifier.send_welcome_whatsapp(booking_data)
                     
+                    self.automation_service.log_rule_execution("Guest Welcome Message", "success")
+
                     yield json.dumps({
                         "step": "guest_notification",
                         "status": "completed",
@@ -121,6 +127,7 @@ class BookingService:
                     }) + "\n"
                 except Exception as e:
                     self.logger.error(f"Guest notification failed: {e}")
+                    self.automation_service.log_rule_execution("Guest Welcome Message", "failed")
                     yield json.dumps({
                         "step": "guest_notification",
                         "status": "failed",
@@ -189,6 +196,7 @@ class BookingService:
                             "status": "completed",
                             "message": f"Notified {notified_count} crew members"
                         }) + "\n"
+                        self.automation_service.log_rule_execution("Create Cleaning Task", "success")
                     else:
                         yield json.dumps({
                             "step": "crew_notification",
@@ -197,6 +205,7 @@ class BookingService:
                         }) + "\n"
                 except Exception as e:
                     self.logger.error(f"Crew notification failed: {e}")
+                    self.automation_service.log_rule_execution("Create Cleaning Task", "failed")
                     yield json.dumps({
                         "step": "crew_notification",
                         "status": "warning",
