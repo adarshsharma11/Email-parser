@@ -67,6 +67,13 @@ def get_activity_rule_service():
     return ActivityRuleService(get_supabase_client(), get_logger())
 
 
+@lru_cache(maxsize=1)
+def get_automation_service():
+    """Get automation service instance with caching."""
+    from .services.automation_service import AutomationService
+    return AutomationService(get_activity_rule_service())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""

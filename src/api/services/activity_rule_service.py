@@ -73,6 +73,30 @@ class ActivityRuleService:
             self.logger.error("Error fetching activity rules", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
 
+    def get_rule_by_slug(self, slug_name: str) -> Optional[ActivityRuleResponse]:
+        """Get a single activity rule by slug name."""
+        self._ensure_initialized()
+        
+        try:
+            res = (
+                self.supabase.client
+                .table(self.table_name)
+                .select("*")
+                .eq("slug_name", slug_name)
+                .execute()
+            )
+            
+            data = getattr(res, "data", [])
+            if not data:
+                return None
+                
+            return ActivityRuleResponse(**data[0])
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching activity rule by slug {slug_name}", error=str(e))
+            # Don't raise, just return None to allow safe checks
+            return None
+
     def get_rule(self, rule_id: int) -> ActivityRuleResponse:
         """Get a single activity rule by ID."""
         self._ensure_initialized()

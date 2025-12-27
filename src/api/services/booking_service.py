@@ -13,6 +13,7 @@ from ..config import settings
 from ...guest_communications.notifier import Notifier
 from ...utils.models import BookingData, Platform
 from .crew_service import CrewService
+from .automation_service import AutomationService
 
 
 class BookingService:
@@ -25,6 +26,7 @@ class BookingService:
         self._cache_ttl = settings.cache_ttl_seconds
         self.notifier = Notifier()
         self.crew_service = CrewService()
+        self.automation_service = AutomationService()
     
     async def create_booking_process(self, request: CreateBookingRequest) -> AsyncGenerator[str, None]:
         """
@@ -87,110 +89,124 @@ class BookingService:
             yield json.dumps({
                 "step": "guest_notification",
                 "status": "in_progress",
-                "message": "Sending guest notifications..."
+                "message": "Checking guest notification rules..."
             }) + "\n"
             
-            try:
-                # Convert request to BookingData for Notifier
-                booking_data = BookingData(
-                    reservation_id=request.reservation_id,
-                    platform=request.platform,
-                    guest_name=request.guest_name,
-                    guest_phone=request.guest_phone,
-                    guest_email=request.guest_email,
-                    check_in_date=request.check_in_date,
-                    check_out_date=request.check_out_date,
-                    property_name=request.property_name or "Vacation Rental",
-                    property_id=request.property_id
-                )
-                
-                # Send welcome email/SMS
-                self.notifier.send_welcome(booking_data)
-                
-                # Send WhatsApp if available (optional)
-                if request.guest_phone:
-                    self.notifier.send_welcome_whatsapp(booking_data)
-                
+            if self.automation_service.is_rule_enabled("guest_welcome_message"):
+                try:
+                    # Convert request to BookingData for Notifier
+                    booking_data = BookingData(
+                        reservation_id=request.reservation_id,
+                        platform=request.platform,
+                        guest_name=request.guest_name,
+                        guest_phone=request.guest_phone,
+                        guest_email=request.guest_email,
+                        check_in_date=request.check_in_date,
+                        check_out_date=request.check_out_date,
+                        property_name=request.property_name or "Vacation Rental",
+                        property_id=request.property_id
+                    )
+                    
+                    # Send welcome email/SMS
+                    self.notifier.send_welcome(booking_data)
+                    
+                    # Send WhatsApp if available (optional)
+                    if request.guest_phone:
+                        self.notifier.send_welcome_whatsapp(booking_data)
+                    
+                    yield json.dumps({
+                        "step": "guest_notification",
+                        "status": "completed",
+                        "message": "Guest notified via Email/SMS"
+                    }) + "\n"
+                except Exception as e:
+                    self.logger.error(f"Guest notification failed: {e}")
+                    yield json.dumps({
+                        "step": "guest_notification",
+                        "status": "failed",
+                        "message": f"Failed to notify guest: {str(e)}"
+                    }) + "\n"
+            else:
                 yield json.dumps({
                     "step": "guest_notification",
-                    "status": "completed",
-                    "message": "Guest notified via Email/SMS"
-                }) + "\n"
-            except Exception as e:
-                self.logger.error(f"Guest notification failed: {e}")
-                yield json.dumps({
-                    "step": "guest_notification",
-                    "status": "failed",
-                    "message": f"Failed to notify guest: {str(e)}"
+                    "status": "skipped",
+                    "message": "Guest welcome rule is disabled"
                 }) + "\n"
 
             # Step 4: Crew Notifications
             yield json.dumps({
                 "step": "crew_notification",
                 "status": "in_progress",
-                "message": "Notifying service crew..."
+                "message": "Checking crew notification rules..."
             }) + "\n"
             
-            try:
-                if request.property_name: # Changed from property_id to property_name as per main.py usage
-                    # Use new logic to get single crew with category_id = 2 (global)
-                    # Fetch ONE crew with category_id = 2 (ignores property_id)
-                    crew = self.crew_service.get_single_crew_by_category(category_id=2)
-                    notified_count = 0
-                    
-                    if crew:
-                        # Calculate cleaning date (usually checkout date)
-                        scheduled_date = request.check_out_date
+            if self.automation_service.is_rule_enabled("create_cleaning_task"):
+                try:
+                    if request.property_name: # Changed from property_id to property_name as per main.py usage
+                        # Use new logic to get single crew with category_id = 2 (global)
+                        # Fetch ONE crew with category_id = 2 (ignores property_id)
+                        crew = self.crew_service.get_single_crew_by_category(category_id=2)
+                        notified_count = 0
                         
-                        # Create cleaning task in database
-                        task = self.supabase_client.create_cleaning_task(
-                            booking_id=request.reservation_id,
-                            property_id=request.property_name,
-                            scheduled_date=scheduled_date,
-                            crew_id=crew.get("id")
-                        )
-                        
-                        if task:
-                            # Prepare task data for notification
-                            task_for_notify = {
-                                "id": task.get("id", f"task_{request.reservation_id}"),
-                                "booking_id": request.reservation_id,
-                                "property_id": request.property_name,
-                                "scheduled_date": scheduled_date
-                            }
+                        if crew:
+                            # Calculate cleaning date (usually checkout date)
+                            scheduled_date = request.check_out_date
                             
-                            # Send notification to crew's email and phone
-                            if self.notifier.notify_cleaning_task(crew, task_for_notify):
-                                notified_count = 1
+                            # Create cleaning task in database
+                            task = self.supabase_client.create_cleaning_task(
+                                booking_id=request.reservation_id,
+                                property_id=request.property_name,
+                                scheduled_date=scheduled_date,
+                                crew_id=crew.get("id")
+                            )
+                            
+                            if task:
+                                # Prepare task data for notification
+                                task_for_notify = {
+                                    "id": task.get("id", f"task_{request.reservation_id}"),
+                                    "booking_id": request.reservation_id,
+                                    "property_id": request.property_name,
+                                    "scheduled_date": scheduled_date
+                                }
                                 
-                                # Add to Google Calendar (Crew)
-                                from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                                calendar_client = GoogleCalendarClient()
-                                calendar_client.add_cleaning_event(crew, task_for_notify)
+                                # Send notification to crew's email and phone
+                                if self.notifier.notify_cleaning_task(crew, task_for_notify):
+                                    notified_count = 1
+                                    
+                                    # Add to Google Calendar (Crew)
+                                    from ...calendar_integration.google_calendar_client import GoogleCalendarClient
+                                    calendar_client = GoogleCalendarClient()
+                                    calendar_client.add_cleaning_event(crew, task_for_notify)
+                                else:
+                                    self.logger.warning(f"Notification failed for crew {crew.get('name', crew.get('id'))}")
                             else:
-                                self.logger.warning(f"Notification failed for crew {crew.get('name', crew.get('id'))}")
+                                self.logger.warning("Failed to create cleaning task in database")
                         else:
-                            self.logger.warning("Failed to create cleaning task in database")
+                            self.logger.warning(f"No crew found with category_id=2 for property {request.property_name}")
+                        
+                        yield json.dumps({
+                            "step": "crew_notification",
+                            "status": "completed",
+                            "message": f"Notified {notified_count} crew members"
+                        }) + "\n"
                     else:
-                        self.logger.warning(f"No crew found with category_id=2 for property {request.property_name}")
-                    
+                        yield json.dumps({
+                            "step": "crew_notification",
+                            "status": "skipped",
+                            "message": "No property name for crew lookup"
+                        }) + "\n"
+                except Exception as e:
+                    self.logger.error(f"Crew notification failed: {e}")
                     yield json.dumps({
                         "step": "crew_notification",
-                        "status": "completed",
-                        "message": f"Notified {notified_count} crew members"
+                        "status": "warning",
+                        "message": "Crew notification incomplete"
                     }) + "\n"
-                else:
-                    yield json.dumps({
-                        "step": "crew_notification",
-                        "status": "skipped",
-                        "message": "No property name for crew lookup"
-                    }) + "\n"
-            except Exception as e:
-                self.logger.error(f"Crew notification failed: {e}")
+            else:
                 yield json.dumps({
                     "step": "crew_notification",
-                    "status": "warning",
-                    "message": "Crew notification incomplete"
+                    "status": "skipped",
+                    "message": "Cleaning task rule is disabled"
                 }) + "\n"
 
             # Step 5: Service Providers
