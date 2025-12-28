@@ -196,11 +196,28 @@ class ResetPasswordRequest(BaseModel):
     token: str = Field(..., description="Password reset token")
     new_password: str = Field(..., description="New password")
 
+class MetricTrend(BaseModel):
+    """Model for a metric with trend data."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    value: float | int = Field(..., description="Current value")
+    percentage_change: float = Field(..., description="Percentage change vs previous period")
+    trend_direction: str = Field(..., description="Direction of change (up/down/neutral)")
+    label: str = Field(..., description="Label for the trend (e.g., 'vs last month')")
+
 class DashboardMetrics(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    total_bookings: int = Field(...)
-    unique_customers: int = Field(...)
-    monthly_sales: List[Dict[str, Any]] = Field(default_factory=list)
+    
+    # Top Cards with Trends
+    total_revenue: MetricTrend = Field(..., description="Total revenue with trend")
+    property_revenue: MetricTrend = Field(..., description="Revenue from properties with trend")
+    service_revenue: MetricTrend = Field(..., description="Revenue from services with trend")
+    active_bookings: MetricTrend = Field(..., description="Number of active bookings with trend")
+    
+    # Lists
+    top_performing_properties: List[Dict[str, Any]] = Field(default_factory=list, description="Top properties with revenue and booking count")
+    luxury_services_revenue: List[Dict[str, Any]] = Field(default_factory=list, description="Luxury services with revenue and booking count")
+    guest_origins: List[Dict[str, Any]] = Field(default_factory=list, description="Guest origins statistics")
+    priority_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="Priority tasks with status and due date")
 
 class DashboardResponse(APIResponse):
     data: DashboardMetrics | Dict[str, Any] = Field(..., description="Dashboard metrics")
