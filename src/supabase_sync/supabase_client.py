@@ -10,8 +10,8 @@ try:
 except Exception:  # pragma: no cover - allow importing tests without package
     create_client = None  # type: ignore
 
-from ..utils.models import BookingData, SyncResult
-from ..utils.logger import get_logger
+from src.utils.models import BookingData, SyncResult
+from src.utils.logger import get_logger
 from config.settings import supabase_config, app_config
 
 
