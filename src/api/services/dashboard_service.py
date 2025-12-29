@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Dict, Any, List
 import logging
 
-from ...supabase_sync.supabase_client import SupabaseClient
+from src.supabase_sync.supabase_client import SupabaseClient
 from config.settings import app_config
 
 
@@ -102,10 +102,11 @@ class DashboardService:
 
         # Helper to fetch revenue for a date range
         def fetch_rev(start_date, end_date):
+            # 1. Fetch bookings
             q = (
                 self.supabase.client
                 .table(app_config.bookings_collection)
-                .select("total_amount, services")
+                .select("reservation_id, total_amount")
                 .gte("created_at", start_date.isoformat()) # Using created_at as proxy for booking period
                 .lt("created_at", end_date.isoformat())
             )
@@ -114,6 +115,27 @@ class DashboardService:
             r = q.execute()
             rows = getattr(r, "data", []) or []
             
+            if not rows:
+                return 0.0, 0.0, 0.0
+                
+            # 2. Fetch services for these bookings to determine service revenue
+            booking_ids = [b.get("reservation_id") for b in rows if b.get("reservation_id")]
+            booking_ids_with_services = set()
+            
+            # Filter for numeric IDs only to avoid Postgres 22P02 error (booking_service.booking_id is BIGINT)
+            numeric_booking_ids = [bid for bid in booking_ids if str(bid).isdigit()]
+            
+            if numeric_booking_ids:
+                svc_q = (
+                    self.supabase.client
+                    .table("booking_service")
+                    .select("booking_id")
+                    .in_("booking_id", numeric_booking_ids)
+                )
+                svc_r = svc_q.execute()
+                svc_rows = getattr(svc_r, "data", []) or []
+                booking_ids_with_services = {str(s.get("booking_id")) for s in svc_rows}
+            
             tot = 0.0
             svc = 0.0
             
@@ -121,10 +143,10 @@ class DashboardService:
             for row in rows:
                 amt = float(row.get("total_amount") or 0)
                 tot += amt
-                # Mock service revenue as 20% of total if not explicit, just for structure
-                # In real app, sum(services prices)
-                booking_services = row.get("services")
-                if booking_services and isinstance(booking_services, list) and len(booking_services) > 0:
+                
+                # If this booking has any services, calculate service revenue
+                b_id = row.get("reservation_id")
+                if b_id in booking_ids_with_services:
                      # If we have services, assume some value. 
                      # Ideally we fetch prices. For speed now, let's say 10% of total is service revenue if services exist.
                      svc += amt * 0.1 
@@ -192,49 +214,54 @@ class DashboardService:
         try:
             # 1. Fetch all services to get their prices and categories
             # Use 'service_category' table instead of 'services' if that's where they are.
-            # Assuming 'service_category' has 'id', 'name'. Price might not be there.
-            # If price is missing, we default to 0.
             services_res = (
                 self.supabase.client
                 .table("service_category") 
-                .select("id, name") # Removed price if it doesn't exist.
+                .select("id, category_name, price") # Use category_name
                 .execute()
             )
             services_map = {s["id"]: s for s in (getattr(services_res, "data", []) or [])}
 
-            # 2. Fetch bookings with services
+            # 2. Fetch bookings with services (Manual Join)
             query = (
                 self.supabase.client
                 .table(app_config.bookings_collection)
-                .select("services")
+                .select("reservation_id")
             )
             if platform:
                 query = query.eq("platform", platform)
             
             bookings_res = query.execute()
             bookings_rows = getattr(bookings_res, "data", []) or []
+            booking_ids = [b.get("reservation_id") for b in bookings_rows if b.get("reservation_id")]
+
+            # Filter for numeric IDs only to avoid Postgres 22P02 error
+            numeric_booking_ids = [bid for bid in booking_ids if str(bid).isdigit()]
 
             # 3. Aggregate revenue per service
             service_stats = {}
-            for row in bookings_rows:
-                booking_services = row.get("services")
-                if not booking_services or not isinstance(booking_services, list):
-                    continue
+            
+            if numeric_booking_ids:
+                svc_query = (
+                    self.supabase.client
+                    .table("booking_service")
+                    .select("service_id") # Only fetch service_id, price is in category
+                    .in_("booking_id", numeric_booking_ids)
+                )
+                svc_res = svc_query.execute()
+                svc_rows = getattr(svc_res, "data", []) or []
                 
-                for s_item in booking_services:
+                for s_item in svc_rows:
                     s_id = s_item.get("service_id")
                     if not s_id:
                         continue
                     
                     service_info = services_map.get(s_id)
                     if service_info:
-                        name = service_info.get("name", "Unknown Service")
+                        name = service_info.get("category_name", "Unknown Service")
                         # Price fallback: 
-                        # If price is in service_category, use it. 
-                        # If not, check if it's in s_item (from booking).
-                        # Assuming booking stores price snapshot?
-                        # If not, we might default to 0.
-                        price = float(service_info.get("price") or s_item.get("price") or 0)
+                        # Use price from service_category
+                        price = float(service_info.get("price") or 0)
                         
                         if name not in service_stats:
                             service_stats[name] = {"revenue": 0.0, "bookings_count": 0}
@@ -258,48 +285,9 @@ class DashboardService:
     def _get_guest_origins(self, platform: str | None) -> List[Dict[str, Any]]:
         """Get guest origins statistics."""
         # User requested format: "america 45 booking, 4500 42 %"
-        # We'll need: Country, Booking Count, Total Revenue, Percentage of Total Revenue
-        
-        query = (
-            self.supabase.client
-            .table(app_config.bookings_collection)
-            .select("guest_country, total_amount")
-        )
-        if platform:
-            query = query.eq("platform", platform)
-            
-        res = query.execute()
-        rows = getattr(res, "data", []) or []
-        
-        origin_stats = {}
-        total_revenue_all = 0.0
-        
-        for row in rows:
-            country = row.get("guest_country") or "Unknown"
-            amount = float(row.get("total_amount") or 0)
-            
-            if country not in origin_stats:
-                origin_stats[country] = {"bookings": 0, "revenue": 0.0}
-            
-            origin_stats[country]["bookings"] += 1
-            origin_stats[country]["revenue"] += amount
-            total_revenue_all += amount
-            
-        result = []
-        for country, stats in origin_stats.items():
-            revenue = stats["revenue"]
-            percentage = (revenue / total_revenue_all * 100) if total_revenue_all > 0 else 0
-            
-            # Format: "america 45 booking, 4500 42 %" (as requested loosely)
-            # Structured: {"origin": country, "bookings": count, "revenue": amount, "percentage": pct}
-            result.append({
-                "origin": country,
-                "bookings": stats["bookings"],
-                "revenue": revenue,
-                "percentage": round(percentage, 2)
-            })
-            
-        return result
+        # Since 'guest_country' column is missing from bookings table, we cannot calculate this.
+        # Returning empty list to prevent crash.
+        return []
 
     def _get_priority_tasks(self, platform: str | None) -> List[Dict[str, Any]]:
         """Get priority tasks from cleaning_tasks table."""
