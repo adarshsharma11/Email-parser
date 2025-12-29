@@ -196,11 +196,28 @@ class ResetPasswordRequest(BaseModel):
     token: str = Field(..., description="Password reset token")
     new_password: str = Field(..., description="New password")
 
+class MetricTrend(BaseModel):
+    """Model for a metric with trend data."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    value: float | int = Field(..., description="Current value")
+    percentage_change: float = Field(..., description="Percentage change vs previous period")
+    trend_direction: str = Field(..., description="Direction of change (up/down/neutral)")
+    label: str = Field(..., description="Label for the trend (e.g., 'vs last month')")
+
 class DashboardMetrics(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    total_bookings: int = Field(...)
-    unique_customers: int = Field(...)
-    monthly_sales: List[Dict[str, Any]] = Field(default_factory=list)
+    
+    # Top Cards with Trends
+    total_revenue: MetricTrend = Field(..., description="Total revenue with trend")
+    property_revenue: MetricTrend = Field(..., description="Revenue from properties with trend")
+    service_revenue: MetricTrend = Field(..., description="Revenue from services with trend")
+    active_bookings: MetricTrend = Field(..., description="Number of active bookings with trend")
+    
+    # Lists
+    top_performing_properties: List[Dict[str, Any]] = Field(default_factory=list, description="Top properties with revenue and booking count")
+    luxury_services_revenue: List[Dict[str, Any]] = Field(default_factory=list, description="Luxury services with revenue and booking count")
+    guest_origins: List[Dict[str, Any]] = Field(default_factory=list, description="Guest origins statistics")
+    priority_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="Priority tasks with status and due date")
 
 class DashboardResponse(APIResponse):
     data: DashboardMetrics | Dict[str, Any] = Field(..., description="Dashboard metrics")
@@ -250,4 +267,29 @@ class ActivityRuleListResponse(APIResponse):
 class ActivityRuleDetailResponse(APIResponse):
     """Response model for a single activity rule."""
     data: ActivityRuleResponse = Field(..., description="Activity rule details")
+
+
+class ActivityRuleLog(BaseModel):
+    """Model for activity rule execution log."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: int = Field(..., description="Unique identifier of the log")
+    rule_name: str = Field(..., description="Name of the rule")
+    outcome: str = Field(..., description="Outcome of the rule execution (success/failed)")
+    created_at: datetime = Field(..., description="Timestamp of the log")
+    updated_at: Optional[datetime] = Field(None, description="Update timestamp of the log")
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime) -> str:
+        # Format: 27/01/2025, 10:00:00
+        return created_at.strftime("%d/%m/%Y, %H:%M:%S")
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, updated_at: Optional[datetime]) -> Optional[str]:
+        return updated_at.strftime("%d/%m/%Y, %H:%M:%S") if updated_at else None
+
+
+class ActivityRuleLogListResponse(APIResponse):
+    """Response model for list of activity rule logs."""
+    data: List[ActivityRuleLog] = Field(..., description="List of activity rule logs")
 
