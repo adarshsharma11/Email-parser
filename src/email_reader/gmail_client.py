@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import smtplib
+import email.utils
 
 from ..utils.models import EmailData, Platform
 from ..utils.logger import get_logger
@@ -21,6 +23,8 @@ class GmailClient:
         self.logger = get_logger("gmail_client")
         self.connection: Optional[imaplib.IMAP4_SSL] = None
         self.connected = False
+        self.auth_email: Optional[str] = None
+        self.auth_password: Optional[str] = None
 
     def connect(self) -> bool:
         """Connect to Gmail IMAP server."""
@@ -37,6 +41,8 @@ class GmailClient:
             )
             self.connection.login(gmail_config.email, gmail_config.password)
             self.connected = True
+            self.auth_email = gmail_config.email
+            self.auth_password = gmail_config.password
 
             self.logger.info("Successfully connected to Gmail")
             return True
@@ -60,6 +66,8 @@ class GmailClient:
             )
             self.connection.login(email_addr, password)
             self.connected = True
+            self.auth_email = email_addr
+            self.auth_password = password
 
             self.logger.info("Successfully connected to Gmail (provided credentials)")
             return True
@@ -94,27 +102,40 @@ class GmailClient:
         query = ["OR"] + terms[0] + self._build_or_chain(terms[1:])
         return query
 
+    def select_mailbox(self, mailbox: str) -> bool:
+        try:
+            if mailbox.upper() == "SENT":
+                for name in ["[Gmail]/Sent Mail", "[Gmail]/Sent", "Sent"]:
+                    status, _ = self.connection.select(name)
+                    if status == "OK":
+                        return True
+                return False
+            status, _ = self.connection.select("INBOX")
+            return status == "OK"
+        except Exception:
+            return False
+    
     def search_emails(
         self,
         platform: Optional[Platform] = None,
         since_days: Optional[int] = None,
         limit: Optional[int] = None,
+        mailbox: str = "INBOX",
+        text_query: Optional[str] = None,
     ) -> List[str]:
-        """Search for emails matching given criteria."""
         if not self.connected:
             self.logger.error("Not connected to Gmail")
             return []
-
+        
         try:
-            self.connection.select("INBOX")
+            if not self.select_mailbox(mailbox):
+                return []
             criteria = ["ALL"]
-
-            # Date filter
             if since_days:
                 since_date = datetime.now() - timedelta(days=since_days)
                 criteria += ["SINCE", since_date.strftime("%d-%b-%Y")]
-
-            # Platform-specific matching (using TEXT for robustness with forwarded mails)
+            if text_query:
+                criteria += ["TEXT", text_query]
             if platform:
                 if platform == Platform.AIRBNB:
                     criteria += ["TEXT", "airbnb"]
@@ -124,32 +145,13 @@ class GmailClient:
                     criteria += ["TEXT", "booking.com"]
                 elif platform == Platform.PLUMGUIDE:
                     criteria += ["TEXT", "plumguide"]
-            else:
-                # Multi-platform: Airbnb + Vrbo + HomeAway + PlumGuide + Booking
-                patterns = [
-                    ["TEXT", "airbnb"],
-                    ["TEXT", "vrbo"],
-                    ["TEXT", "homeaway"],
-                    ["TEXT", "plumguide"],
-                    ["TEXT", "booking.com"],
-                ]
-                criteria += self._build_or_chain(patterns)
-
-            self.logger.info("Searching emails", criteria=criteria)
-
             status, email_ids = self.connection.search(None, *criteria)
-
             if status != "OK":
-                self.logger.error("Failed to search emails", status=status)
                 return []
-
             email_id_list = email_ids[0].split()
             if limit:
                 email_id_list = email_id_list[:limit]
-
-            self.logger.info("Found emails", count=len(email_id_list))
             return [eid.decode() for eid in email_id_list]
-
         except Exception as e:
             self.logger.error("Error searching emails", error=str(e))
             return []
@@ -159,16 +161,24 @@ class GmailClient:
         if not self.connected:
             self.logger.error("Not connected to Gmail")
             return None
-
+        
         try:
+            status_sel, _ = self.connection.select("INBOX")
+            if status_sel != "OK":
+                self.logger.error("Failed to select INBOX", status=status_sel)
+                return None
             status, msg_data = self.connection.fetch(email_id, "(RFC822)")
             if status != "OK":
-                self.logger.error(
-                    "Failed to fetch email", email_id=email_id, status=status
-                )
-                return None
-
-            raw_email = msg_data[0][1]
+                # Try UID fetch as a fallback
+                status_uid, msg_data_uid = self.connection.uid("fetch", email_id, "(RFC822)")
+                if status_uid != "OK":
+                    self.logger.error(
+                        "Failed to fetch email", email_id=email_id, status=status
+                    )
+                    return None
+                raw_email = msg_data_uid[0][1]
+            else:
+                raw_email = msg_data[0][1]
             email_message = email.message_from_bytes(raw_email)
 
             subject = self._decode_header(email_message["subject"])
@@ -209,16 +219,23 @@ class GmailClient:
         platform: Optional[Platform] = None,
         since_days: Optional[int] = None,
         limit: Optional[int] = None,
+        mailbox: str = "INBOX",
+        text_query: Optional[str] = None,
+        only_booking: bool = True,
     ) -> List[EmailData]:
-        """Fetch multiple emails from vacation rental platforms."""
-        email_ids = self.search_emails(platform, since_days, limit)
+        email_ids = self.search_emails(platform, since_days, limit, mailbox, text_query)
         emails = []
-
+        
         for eid in email_ids:
             email_data = self.fetch_email(eid)
             if email_data:
                 emails.append(email_data)
-
+        if only_booking:
+            emails = [
+                e for e in emails
+                if e.platform in (Platform.VRBO, Platform.AIRBNB, Platform.BOOKING, Platform.PLUMGUIDE)
+            ]
+        emails.sort(key=lambda e: e.date, reverse=True)
         self.logger.info("Fetched emails", count=len(emails))
         return emails
 
@@ -235,6 +252,74 @@ class GmailClient:
             self.logger.error(
                 "Error marking email as read", email_id=email_id, error=str(e)
             )
+            return False
+    
+    def send_email(self, to_address: str, subject: str, body_text: str, body_html: Optional[str] = None) -> bool:
+        """Send an email using Gmail SMTP."""
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["From"] = self.auth_email or gmail_config.email
+            msg["To"] = to_address
+            msg["Subject"] = subject
+            msg["Date"] = email.utils.formatdate(localtime=True)
+            
+            part1 = MIMEText(body_text or "", "plain")
+            msg.attach(part1)
+            if body_html:
+                part2 = MIMEText(body_html, "html")
+                msg.attach(part2)
+            
+            with smtplib.SMTP(gmail_config.smtp_server, gmail_config.smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                login_email = self.auth_email or gmail_config.email
+                login_pass = self.auth_password or gmail_config.password
+                server.login(login_email, login_pass)
+                server.sendmail(login_email, [to_address], msg.as_string())
+            return True
+        except Exception as e:
+            self.logger.error("Failed to send email", error=str(e))
+            return False
+    
+    def reply_to_email(self, original_email_id: str, to_address: str, subject: str, body_text: str, body_html: Optional[str] = None) -> bool:
+        """Reply to a specific email by ID."""
+        try:
+            if not self.connected:
+                self.logger.error("Not connected to Gmail")
+                return False
+            
+            status, msg_data = self.connection.fetch(original_email_id, "(RFC822)")
+            if status != "OK":
+                self.logger.error("Failed to fetch original email", email_id=original_email_id, status=status)
+                return False
+            raw_email = msg_data[0][1]
+            original = email.message_from_bytes(raw_email)
+            
+            msg = MIMEMultipart("alternative")
+            msg["From"] = self.auth_email or gmail_config.email
+            msg["To"] = to_address
+            msg["Subject"] = subject
+            msg["Date"] = email.utils.formatdate(localtime=True)
+            msg["In-Reply-To"] = original.get("Message-ID", "")
+            refs = original.get("References", "")
+            msg["References"] = (refs + " " + original.get("Message-ID", "")).strip()
+            
+            part1 = MIMEText(body_text or "", "plain")
+            msg.attach(part1)
+            if body_html:
+                part2 = MIMEText(body_html, "html")
+                msg.attach(part2)
+            
+            with smtplib.SMTP(gmail_config.smtp_server, gmail_config.smtp_port) as server:
+                server.ehlo()
+                server.starttls()
+                login_email = self.auth_email or gmail_config.email
+                login_pass = self.auth_password or gmail_config.password
+                server.login(login_email, login_pass)
+                server.sendmail(login_email, [to_address], msg.as_string())
+            return True
+        except Exception as e:
+            self.logger.error("Failed to reply to email", error=str(e))
             return False
 
     def _decode_header(self, header: str) -> str:

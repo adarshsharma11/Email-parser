@@ -11,7 +11,7 @@ import json
 
 from .config import settings
 from .dependencies import get_logger, get_supabase_client, get_booking_service
-from .routes import bookings, health, crews, ical, users, dashboard, auth, service_categories, activity_rules, automation
+from .routes import bookings, health, crews, ical, users, dashboard, auth, service_categories, activity_rules, automation, emails
 from .routes import categories
 from .models import ErrorResponse
 
@@ -174,6 +174,10 @@ def create_app() -> FastAPI:
 
     app.include_router(
         automation.router,
+        prefix=f"{settings.api_prefix}/v1"
+    )
+    app.include_router(
+        emails.router,
         prefix=f"{settings.api_prefix}/v1"
     )
     

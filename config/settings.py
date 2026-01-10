@@ -17,6 +17,8 @@ class GmailConfig:
     password: str = os.getenv("GMAIL_PASSWORD", "")
     imap_server: str = os.getenv("GMAIL_IMAP_SERVER", "imap.gmail.com")
     imap_port: int = int(os.getenv("GMAIL_IMAP_PORT", "993"))
+    smtp_server: str = os.getenv("GMAIL_SMTP_SERVER", "smtp.gmail.com")
+    smtp_port: int = int(os.getenv("GMAIL_SMTP_PORT", "587"))
     
     # Email search patterns for vacation rental platforms
     search_patterns: Dict[str, str] = None
