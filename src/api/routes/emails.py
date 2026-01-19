@@ -17,6 +17,7 @@ def _serialize_email(e: EmailData) -> Dict[str, Any]:
         "body_text": e.body_text,
         "body_html": e.body_html,
         "platform": e.platform.value if e.platform else None,
+        "folder": getattr(e, "folder", "INBOX"),
     }
 
 
@@ -30,23 +31,9 @@ def list_inbox(
     q: Optional[str] = Query(default=None),
     only_booking: bool = Query(default=True),
 ) -> List[Dict[str, Any]]:
-    user_email = getattr(request.state, "user_email", None)
-    user_service = get_user_service()
-    password = None
-    if user_email:
-        user = user_service.get_user(user_email)
-        if user and user.get("password"):
-            try:
-                password = user_service.decrypt(user.get("password", ""))
-            except Exception:
-                password = None
+    user_email, password = _get_credentials(request)
     if not user_email or not password:
-        from config.settings import gmail_config
-        if gmail_config.email and gmail_config.password:
-            user_email = gmail_config.email
-            password = gmail_config.password
-        else:
-            return []
+        return []
 
     client = GmailClient()
     if not client.connect_with_credentials(user_email, password):
@@ -71,11 +58,42 @@ def list_inbox(
     return [_serialize_email(e) for e in emails]
 
 
-@router.get("/emails/{email_id}")
-def get_email(request: Request, email_id: str) -> Dict[str, Any]:
+@router.get("/emails/sent")
+def list_sent(
+    request: Request,
+    since_days: Optional[int] = Query(default=None),
+    limit: Optional[int] = Query(default=50),
+    q: Optional[str] = Query(default=None),
+) -> List[Dict[str, Any]]:
+    """
+    Fetch emails from SENT folder without platform filtering (all sent emails).
+    """
+    user_email, password = _get_credentials(request)
+    if not user_email or not password:
+        return []
+
+    client = GmailClient()
+    if not client.connect_with_credentials(user_email, password):
+        return []
+
+    emails = client.fetch_emails(
+        platform=None,
+        since_days=since_days,
+        limit=limit,
+        mailbox="SENT",
+        text_query=q,
+        only_booking=False,
+    )
+    client.disconnect()
+    return [_serialize_email(e) for e in emails]
+
+
+def _get_credentials(request: Request):
+    """Helper to get credentials from request state or fallback to env."""
     user_email = getattr(request.state, "user_email", None)
     user_service = get_user_service()
     password = None
+    
     if user_email:
         user = user_service.get_user(user_email)
         if user and user.get("password"):
@@ -83,18 +101,27 @@ def get_email(request: Request, email_id: str) -> Dict[str, Any]:
                 password = user_service.decrypt(user.get("password", ""))
             except Exception:
                 password = None
+                
     if not user_email or not password:
         from config.settings import gmail_config
         if gmail_config.email and gmail_config.password:
             user_email = gmail_config.email
             password = gmail_config.password
-        else:
-            return {}
+            
+    return user_email, password
+
+
+@router.get("/emails/{email_id}")
+def get_email(request: Request, email_id: str, folder: Optional[str] = Query(default="INBOX")) -> Dict[str, Any]:
+    user_email, password = _get_credentials(request)
+    if not user_email or not password:
+        return {}
 
     client = GmailClient()
     if not client.connect_with_credentials(user_email, password):
         return {}
-    e = client.fetch_email(email_id)
+    target_folder = (folder or "INBOX").upper()
+    e = client.fetch_email(email_id, mailbox=target_folder)
     client.disconnect()
     return _serialize_email(e) if e else {}
 
@@ -107,23 +134,9 @@ def reply_email(
     body_html: Optional[str] = None,
     subject: Optional[str] = None,
 ) -> Dict[str, Any]:
-    user_email = getattr(request.state, "user_email", None)
-    user_service = get_user_service()
-    password = None
-    if user_email:
-        user = user_service.get_user(user_email)
-        if user and user.get("password"):
-            try:
-                password = user_service.decrypt(user.get("password", ""))
-            except Exception:
-                password = None
+    user_email, password = _get_credentials(request)
     if not user_email or not password:
-        from config.settings import gmail_config
-        if gmail_config.email and gmail_config.password:
-            user_email = gmail_config.email
-            password = gmail_config.password
-        else:
-            return {"success": False}
+        return {"success": False}
 
     client = GmailClient()
     if not client.connect_with_credentials(user_email, password):
