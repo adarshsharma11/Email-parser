@@ -73,6 +73,22 @@ class BookingAutomation:
                            dry_run=dry_run)
             
             active_users = self.user_service.list_active_users()
+            
+            # Fallback to .env credentials if no DB users found
+            if not active_users:
+                from config.settings import gmail_config
+                if gmail_config.email and gmail_config.password:
+                    self.logger.info("No active users in DB, using .env credentials")
+                    try:
+                        # Encrypt password to match expected format
+                        enc_pwd = self.user_service.encrypt(gmail_config.password)
+                        active_users = [{
+                            "email": gmail_config.email, 
+                            "password": enc_pwd
+                        }]
+                    except Exception as e:
+                        self.logger.warning("Failed to encrypt .env password", error=str(e))
+            
             if not active_users:
                 return self._get_empty_results()
 
@@ -91,7 +107,7 @@ class BookingAutomation:
                 if not client.connect_with_credentials(email_addr, pwd):
                     self.user_service.update_status(email_addr, "inactive")
                     continue
-                fetched = client.fetch_emails(platform, since_days, limit)
+                fetched = client.fetch_emails(platform, since_days, limit, mailbox="BOTH")
                 emails.extend(fetched or [])
                 for ed in fetched or []:
                     if not dry_run:

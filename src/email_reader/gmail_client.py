@@ -5,7 +5,7 @@ import imaplib
 import email
 from email.header import decode_header
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Union
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
@@ -104,15 +104,35 @@ class GmailClient:
 
     def select_mailbox(self, mailbox: str) -> bool:
         try:
+            # 1. Handle special "SENT" alias
             if mailbox.upper() == "SENT":
-                for name in ["[Gmail]/Sent Mail", "[Gmail]/Sent", "Sent"]:
-                    status, _ = self.connection.select(name)
-                    if status == "OK":
-                        return True
+                # Try known variations, quoting those with spaces
+                candidates = ['"[Gmail]/Sent Mail"', "[Gmail]/Sent Mail", "[Gmail]/Sent", "Sent"]
+                for name in candidates:
+                    try:
+                        status, _ = self.connection.select(name)
+                        if status == "OK":
+                            return True
+                    except Exception:
+                        continue
                 return False
-            status, _ = self.connection.select("INBOX")
+
+            # 2. Handle "INBOX" explicitly
+            if mailbox.upper() == "INBOX":
+                status, _ = self.connection.select("INBOX")
+                return status == "OK"
+
+            # 3. Handle arbitrary folders
+            # If it has spaces and isn't quoted, quote it
+            target = mailbox
+            if " " in target and not target.startswith('"'):
+                target = f'"{target}"'
+            
+            status, _ = self.connection.select(target)
             return status == "OK"
-        except Exception:
+
+        except Exception as e:
+            self.logger.error("Error selecting mailbox", mailbox=mailbox, error=str(e))
             return False
     
     def search_emails(
@@ -122,6 +142,7 @@ class GmailClient:
         limit: Optional[int] = None,
         mailbox: str = "INBOX",
         text_query: Optional[str] = None,
+        match_any_booking: bool = False,
     ) -> List[str]:
         if not self.connected:
             self.logger.error("Not connected to Gmail")
@@ -130,25 +151,56 @@ class GmailClient:
         try:
             if not self.select_mailbox(mailbox):
                 return []
-            criteria = ["ALL"]
+            criteria = []
+            
+            # Date filter
             if since_days:
                 since_date = datetime.now() - timedelta(days=since_days)
                 criteria += ["SINCE", since_date.strftime("%d-%b-%Y")]
+            
+            # Text query
             if text_query:
                 criteria += ["TEXT", text_query]
+            
+            # Platform filters
             if platform:
                 if platform == Platform.AIRBNB:
                     criteria += ["TEXT", "airbnb"]
                 elif platform == Platform.VRBO:
-                    criteria += ["TEXT", "vrbo"]
+                    criteria += ["OR", "TEXT", "vrbo", "TEXT", "homeaway"]
                 elif platform == Platform.BOOKING:
                     criteria += ["TEXT", "booking.com"]
                 elif platform == Platform.PLUMGUIDE:
                     criteria += ["TEXT", "plumguide"]
+            elif match_any_booking:
+                # Search for ANY of the booking platforms using recursive OR
+                terms = [
+                    ["TEXT", "airbnb"],
+                    ["TEXT", "vrbo"],
+                    ["TEXT", "homeaway"],
+                    ["TEXT", "booking.com"],
+                    ["TEXT", "plumguide"]
+                ]
+                criteria += self._build_or_chain(terms)
+            else:
+                # No specific platform and not restricting to booking -> ALL
+                # Only add ALL if no other criteria exist, otherwise implicit AND applies
+                if not criteria:
+                    criteria = ["ALL"]
+
+            # If criteria is empty (shouldn't happen due to logic above, but safe fallback)
+            if not criteria:
+                criteria = ["ALL"]
+
+            self.logger.debug("Searching emails with criteria", criteria=criteria, mailbox=mailbox)
             status, email_ids = self.connection.search(None, *criteria)
             if status != "OK":
                 return []
             email_id_list = email_ids[0].split()
+            # Gmail returns IDs in ascending order (oldest first). 
+            # We want the newest emails, so we reverse the list.
+            email_id_list.reverse()
+            
             if limit:
                 email_id_list = email_id_list[:limit]
             return [eid.decode() for eid in email_id_list]
@@ -156,16 +208,15 @@ class GmailClient:
             self.logger.error("Error searching emails", error=str(e))
             return []
 
-    def fetch_email(self, email_id: str) -> Optional[EmailData]:
+    def fetch_email(self, email_id: str, mailbox: str = "INBOX") -> Optional[EmailData]:
         """Fetch and parse a single email."""
         if not self.connected:
             self.logger.error("Not connected to Gmail")
             return None
         
         try:
-            status_sel, _ = self.connection.select("INBOX")
-            if status_sel != "OK":
-                self.logger.error("Failed to select INBOX", status=status_sel)
+            if not self.select_mailbox(mailbox):
+                self.logger.error("Failed to select mailbox", mailbox=mailbox)
                 return None
             status, msg_data = self.connection.fetch(email_id, "(RFC822)")
             if status != "OK":
@@ -201,6 +252,7 @@ class GmailClient:
                 body_text=body_text,
                 body_html=body_html,
                 platform=platform,
+                folder=mailbox,
             )
 
             self.logger.debug(
@@ -219,23 +271,50 @@ class GmailClient:
         platform: Optional[Platform] = None,
         since_days: Optional[int] = None,
         limit: Optional[int] = None,
-        mailbox: str = "INBOX",
+        mailbox: Union[str, List[str]] = "INBOX",
         text_query: Optional[str] = None,
         only_booking: bool = True,
     ) -> List[EmailData]:
-        email_ids = self.search_emails(platform, since_days, limit, mailbox, text_query)
-        emails = []
+        mailboxes = []
+        if isinstance(mailbox, str):
+            if mailbox.upper() == "BOTH":
+                mailboxes = ["INBOX", "SENT"]
+            elif "," in mailbox:
+                mailboxes = [m.strip() for m in mailbox.split(",")]
+            else:
+                mailboxes = [mailbox]
+        elif isinstance(mailbox, list):
+            mailboxes = mailbox
+        else:
+            mailboxes = ["INBOX"]
+
+        all_emails = []
+        for box in mailboxes:
+            email_ids = self.search_emails(
+                platform, 
+                since_days, 
+                limit, 
+                box, 
+                text_query,
+                match_any_booking=(only_booking and platform is None)
+            )
+            for eid in email_ids:
+                email_data = self.fetch_email(eid, mailbox=box)
+                if email_data:
+                    all_emails.append(email_data)
         
-        for eid in email_ids:
-            email_data = self.fetch_email(eid)
-            if email_data:
-                emails.append(email_data)
+        emails = all_emails
+        
         if only_booking:
             emails = [
                 e for e in emails
                 if e.platform in (Platform.VRBO, Platform.AIRBNB, Platform.BOOKING, Platform.PLUMGUIDE)
             ]
         emails.sort(key=lambda e: e.date, reverse=True)
+        
+        if limit and len(emails) > limit:
+            emails = emails[:limit]
+            
         self.logger.info("Fetched emails", count=len(emails))
         return emails
 

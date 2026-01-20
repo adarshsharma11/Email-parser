@@ -25,6 +25,7 @@ class EmailData:
     body_text: str
     body_html: str
     platform: Optional[Platform] = None
+    folder: str = "INBOX"
     
     def __post_init__(self):
         if isinstance(self.platform, str):
