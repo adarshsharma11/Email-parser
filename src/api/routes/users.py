@@ -11,20 +11,29 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.post("", response_model=UserResponse, responses={500: {"model": ErrorResponse}})
 async def create_or_update_user(payload: UserRequest, service: UserService = Depends(get_user_service)):
     try:
-        data = service.save_user(payload.email, payload.password)
+        plat = payload.platform.value if payload.platform else None
+        data = service.save_user(payload.email, payload.password, platform=plat)
         return {"success": True, "message": "User saved", "data": {"email": data["email"]}}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Failed to save user", "details": {"error": str(e)}})
 
 
 @router.put("/{email}", response_model=UserResponse, responses={500: {"model": ErrorResponse}})
-async def update_user_password(email: str, payload: UserUpdateRequest, service: UserService = Depends(get_user_service)):
+async def update_user(email: str, payload: UserUpdateRequest, service: UserService = Depends(get_user_service)):
     try:
-        service.update_password(email, payload.password)
-        return {"success": True, "message": "Password updated", "data": {"email": email}}
+        plat = payload.platform.value if payload.platform else None
+        service.update_user(email, new_email=payload.new_email, password=payload.password, platform=plat)
+        return {"success": True, "message": "User updated", "data": {"email": payload.new_email or email}}
     except Exception as e:
-        raise HTTPException(status_code=500, detail={"message": "Failed to update password", "details": {"error": str(e)}})
+        raise HTTPException(status_code=500, detail={"message": "Failed to update user", "details": {"error": str(e)}})
 
+@router.put("/platform/{platform}", response_model=UserResponse, responses={500: {"model": ErrorResponse}})
+async def update_by_platform(platform: str, payload: UserRequest, service: UserService = Depends(get_user_service)):
+    try:
+        service.update_by_platform(platform, payload.email, payload.password)
+        return {"success": True, "message": "User updated", "data": {"platform": platform, "email": payload.email}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to update user by platform", "details": {"error": str(e)}})
 
 @router.get("", response_model=UserListResponse, responses={500: {"model": ErrorResponse}})
 async def list_users(service: UserService = Depends(get_user_service)):
