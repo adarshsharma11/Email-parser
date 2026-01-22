@@ -72,10 +72,15 @@ class SupabaseClient:
                     reservation_id=booking_data.reservation_id,
                 )
 
-            # Check if exists by reservation_id
-            existing = self.get_booking_by_reservation_id(booking_data.reservation_id)
+            # Duplicate check only by email_id (requested behavior)
+            existing = None
+            if getattr(booking_data, "email_id", None):
+                existing = self.get_booking_by_email_id(booking_data.email_id)  # type: ignore
+            # Fallback to reservation_id if email_id is missing
+            if existing is None:
+                existing = self.get_booking_by_reservation_id(booking_data.reservation_id)
             if existing is not None:
-                self.logger.info("Booking already exists in Supabase", reservation_id=booking_data.reservation_id)
+                self.logger.info("Booking already exists in Supabase", email_id=booking_data.email_id, reservation_id=booking_data.reservation_id)
                 return SyncResult(
                     success=True,
                     is_new=False,
@@ -269,6 +274,57 @@ class SupabaseClient:
         except Exception as e:
             self.logger.error("Error getting booking by reservation ID", reservation_id=reservation_id, error=str(e))
             return None
+
+    def get_booking_by_email_id(self, email_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            if not self.initialized and not self.initialize():
+                return None
+            res = (
+                self.client.table(app_config.bookings_collection)
+                .select("*")
+                .eq("email_id", email_id)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(res, "data", []) or getattr(res, "json", {}).get("data", [])
+            return rows[0] if rows else None
+        except Exception as e:
+            self.logger.error("Error getting booking by email ID", email_id=email_id, error=str(e))
+            return None
+
+    def get_bookings_paginated(self, platform: Optional[str], offset: int, limit: int) -> Dict[str, Any]:
+        """Paginated bookings without date filtering; includes records with null check_in_date."""
+        try:
+            if not self.initialized and not self.initialize():
+                return {"rows": [], "total": 0}
+            base = self.client.table(app_config.bookings_collection)
+            # total count query (without range)
+            count_query = base.select("reservation_id", count="exact")
+            if platform:
+                count_query = count_query.eq("platform", platform)
+            count_res = count_query.execute()
+            total = getattr(count_res, "count", None)
+            if total is None:
+                total_rows = getattr(count_res, "data", []) or getattr(count_res, "json", {}).get("data", [])
+                total = len(total_rows)
+
+            # data query with ordering and range
+            data_query = base.select("*").order("created_at", desc=True)
+            if platform:
+                data_query = data_query.eq("platform", platform)
+            data_query = data_query.range(offset, max(0, offset + limit - 1))
+            data_res = data_query.execute()
+            if hasattr(data_res, "data"):
+                rows = data_res.data or []
+            elif hasattr(data_res, "json") and callable(data_res.json):
+                rows = data_res.json().get("data", [])
+            else:
+                rows = getattr(data_res, "json", {}).get("data", []) or []
+
+            return {"rows": rows, "total": int(total)}
+        except Exception as e:
+            self.logger.error("Error fetching paginated bookings", platform=platform, offset=offset, limit=limit, error=str(e))
+            return {"rows": [], "total": 0}
 
     def get_bookings_by_platform(self, platform: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         try:
@@ -498,4 +554,3 @@ class SupabaseClient:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
-

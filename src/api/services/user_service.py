@@ -174,3 +174,32 @@ class UserService:
             .execute()
         )
         return result.data or []
+
+    def list_all_credentials(self, limit: int = 1000, offset: int = 0) -> list[Dict[str, Any]]:
+        """List all credential records with email and encrypted password, regardless of status."""
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+        result = (
+            self.supabase.client
+            .table(app_config.users_collection)
+            .select("email,password,status,platform")
+            .range(offset, offset + max(0, limit) - 1)
+            .execute()
+        )
+        return result.data or []
+
+    def get_first_user(self) -> Optional[Dict[str, Any]]:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+        result = (
+            self.supabase.client
+            .table(app_config.users_collection)
+            .select("email,password")
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]
+        return None

@@ -70,13 +70,9 @@ class BookingParser:
             # Extract data (subject + body + html)
             extracted_data = self._extract_data(email_data)
 
+            # Fallback: if reservation_id missing, use email_id to ensure booking capture
             if not extracted_data.get('reservation_id'):
-                return ProcessingResult(
-                    success=False,
-                    error_message="Could not extract reservation ID",
-                    email_id=email_data.email_id,
-                    platform=email_data.platform
-                )
+                extracted_data['reservation_id'] = str(email_data.email_id)
 
             booking_data = BookingData(
                 reservation_id=extracted_data['reservation_id'],
@@ -149,6 +145,9 @@ class BookingParser:
             match = re.search(r'for (.*?) from', subject)
             if match:
                 extracted_data['guest_name'] = match.group(1).strip()
+            match = re.search(r'at\s+(.+?)(?:\s+(?:from|—|-)|$)', subject)
+            if match:
+                extracted_data['property_name'] = match.group(1).strip()
 
         elif email_data.platform == Platform.BOOKING:
             match = re.search(r'Booking number\s*([0-9]+)', subject)
@@ -222,6 +221,8 @@ class BookingParser:
                             html_data['guest_phone'] = value
                         elif 'email' in key:
                             html_data['guest_email'] = value
+                        elif 'property' in key and 'id' in key:
+                            html_data['property_id'] = value
                         elif 'property' in key:
                             html_data['property_name'] = value
                         elif 'guest' in key:
@@ -236,6 +237,18 @@ class BookingParser:
                                 html_data['total_amount'] = float(clean_val) if clean_val else None
                             except Exception:
                                 pass
+            if 'property_name' not in html_data:
+                for h in soup.find_all(['h1', 'h2', 'h3']):
+                    t = h.get_text().strip()
+                    if t and len(t.split()) >= 2 and not re.search(r'(reservation|booking)', t, re.IGNORECASE):
+                        html_data['property_name'] = t
+                        break
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                m_airbnb = re.search(r'airbnb\.com/rooms/(\d+)', href)
+                if m_airbnb:
+                    html_data['property_id'] = m_airbnb.group(1)
+                    break
         except Exception as e:
             self.logger.debug("HTML extraction error", error=str(e))
         return html_data
