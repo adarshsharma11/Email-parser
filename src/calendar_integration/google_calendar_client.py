@@ -1,5 +1,9 @@
-from googleapiclient.discovery import build
-from google.oauth2 import service_account
+try:
+    from googleapiclient.discovery import build  # type: ignore
+    from google.oauth2 import service_account  # type: ignore
+    _GCAL_AVAILABLE = True
+except Exception:
+    _GCAL_AVAILABLE = False
 from ..utils.logger import get_logger
 from typing import Optional, Union
 from datetime import datetime, timedelta
@@ -13,16 +17,26 @@ class GoogleCalendarClient:
         calendar_id="sharmaneha4191@gmail.com",
         log_level="INFO",
     ):
-        scopes = ["https://www.googleapis.com/auth/calendar"]
-        self.creds = service_account.Credentials.from_service_account_file(
-            credentials_file, scopes=scopes
-        )
-        self.service = build("calendar", "v3", credentials=self.creds)
         self.logger = get_logger("google_calendar")
         self.calendar_id = calendar_id
+        if _GCAL_AVAILABLE:
+            scopes = ["https://www.googleapis.com/auth/calendar"]
+            try:
+                self.creds = service_account.Credentials.from_service_account_file(
+                    credentials_file, scopes=scopes
+                )
+                self.service = build("calendar", "v3", credentials=self.creds)
+            except Exception as e:
+                self.logger.warning("Google Calendar init failed, falling back to no-op", error=str(e))
+                self.service = None
+        else:
+            self.service = None
 
     def add_booking_event(self, booking):
         """Add booking as calendar event."""
+        if not self.service:
+            self.logger.info("Calendar not available, skip add_booking_event")
+            return None
         try:
             event = {
                 "summary": f"Booking - {booking.guest_name} ({booking.property_name})",
@@ -53,6 +67,9 @@ class GoogleCalendarClient:
 
     def block_dates(self, property_id, check_in, check_out):
         """Block property dates on calendar."""
+        if not self.service:
+            self.logger.info("Calendar not available, skip block_dates")
+            return None
         try:
             event = {
                 "summary": f"Blocked - {property_id}",
@@ -91,6 +108,9 @@ class GoogleCalendarClient:
         Create a cleaning event and add crew as attendee (if crew.email is present).
         Returns the created event id (string) or None on failure.
         """
+        if not self.service:
+            self.logger.info("Calendar not available, skip add_cleaning_event")
+            return None
         try:
             # Debug logging to see what parameters are actually passed
             self.logger.info("add_cleaning_event called", crew_type=type(crew), crew_value=crew, task_type=type(task), task_value=task, calendar_id=calendar_id)

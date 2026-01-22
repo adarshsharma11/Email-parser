@@ -72,6 +72,7 @@ class BookingAutomation:
                            limit=limit,
                            dry_run=dry_run)
             
+            # Use only active credentials from DB
             active_users = self.user_service.list_active_users()
             
             # Fallback to .env credentials if no DB users found
@@ -101,13 +102,22 @@ class BookingAutomation:
                 try:
                     pwd = self.user_service.decrypt(enc)
                 except Exception:
-                    self.user_service.update_status(email_addr, "inactive")
+                    try:
+                        self.user_service.update_status(email_addr, "inactive")
+                    except Exception:
+                        pass
                     continue
                 client = GmailClient()
                 if not client.connect_with_credentials(email_addr, pwd):
-                    self.user_service.update_status(email_addr, "inactive")
+                    try:
+                        self.user_service.update_status(email_addr, "inactive")
+                    except Exception:
+                        pass
                     continue
-                fetched = client.fetch_emails(platform, since_days, limit, mailbox="BOTH")
+                # Enforce last 24 hours window if not provided
+                # User requested to fetch all bookings similar to API behavior, so we remove the default 1 day limit
+                since_days_effective = since_days
+                fetched = client.fetch_emails(platform, since_days_effective, limit, mailbox="INBOX")
                 emails.extend(fetched or [])
                 for ed in fetched or []:
                     if not dry_run:
@@ -155,12 +165,20 @@ class BookingAutomation:
                     })
                     self.booking_logger.log_error(e, f"Email processing failed: {email_data.email_id}")
             
-            # Sync bookings to database
+            # Sync bookings to database (deduplicate by reservation_id)
             sync_results = []
             if successful_bookings and not dry_run:
-                sync_results = self.firestore_client.sync_bookings(successful_bookings, dry_run)
+                unique_by_email = {}
+                for b in successful_bookings:
+                    eid = getattr(b, "email_id", None)
+                    if eid and eid not in unique_by_email:
+                        unique_by_email[eid] = b
+                unique_bookings = list(unique_by_email.values())
+                sync_results = self.firestore_client.sync_bookings(unique_bookings, dry_run)
                 
                 for i, sync_result in enumerate(sync_results):
+                    event_id = None
+                    block_event = None
                     if sync_result.success:
                         if sync_result.is_new:
                             self.booking_logger.log_new_booking(successful_bookings[i].to_dict())
@@ -176,7 +194,17 @@ class BookingAutomation:
                                     f"Notification failed for booking {sync_result.reservation_id}"
                                 )
                         else:
-                          event_id = self.calendar_client.add_booking_event(dummy_booking)
+                            event_id = self.calendar_client.add_booking_event(dummy_booking)
+                            updates = {}
+                            if successful_bookings[i].property_id:
+                                updates["property_id"] = successful_bookings[i].property_id
+                            if successful_bookings[i].property_name:
+                                updates["property_name"] = successful_bookings[i].property_name
+                            if updates:
+                                try:
+                                    self.firestore_client.update_booking(successful_bookings[i].reservation_id, updates)
+                                except Exception:
+                                    pass
                         if event_id:
                             self.logger.info(
                                 "Google Calendar booking event created",

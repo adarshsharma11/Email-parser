@@ -103,10 +103,18 @@ def _get_credentials(request: Request):
                 password = None
                 
     if not user_email or not password:
-        from config.settings import gmail_config
-        if gmail_config.email and gmail_config.password:
-            user_email = gmail_config.email
-            password = gmail_config.password
+        first = user_service.get_first_user()
+        if first and first.get("email") and first.get("password"):
+            try:
+                password = user_service.decrypt(first.get("password", ""))
+                user_email = first.get("email")
+            except Exception:
+                password = None
+        if not user_email or not password:
+            from config.settings import gmail_config
+            if gmail_config.email and gmail_config.password:
+                user_email = gmail_config.email
+                password = gmail_config.password
             
     return user_email, password
 

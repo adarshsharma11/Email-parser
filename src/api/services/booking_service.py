@@ -423,21 +423,10 @@ class BookingService:
             # Calculate offset for pagination
             offset = (page - 1) * limit
             
-            # Get bookings based on platform filter
-            if platform:
-                # Use existing platform-specific method
-                all_bookings = self.supabase_client.get_bookings_by_platform(platform)
-                # Manual pagination since the existing method doesn't support offset
-                total_count = len(all_bookings)
-                bookings_data = all_bookings[offset:offset + limit]
-            else:
-                # Get all bookings - we'll need to implement a generic method or use date range
-                # For now, let's use a reasonable date range to get recent bookings
-                end_date = datetime.utcnow()
-                start_date = end_date - timedelta(days=365)  # Last year
-                all_bookings = self.supabase_client.get_bookings_by_date_range(start_date, end_date)
-                total_count = len(all_bookings)
-                bookings_data = all_bookings[offset:offset + limit]
+            # Use paginated query directly (no date filter; includes records with null check_in_date)
+            paginated = self.supabase_client.get_bookings_paginated(platform, offset, limit)
+            total_count = paginated.get("total", 0)
+            bookings_data = paginated.get("rows", [])
             
             total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
             
