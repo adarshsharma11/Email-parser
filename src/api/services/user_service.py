@@ -29,28 +29,26 @@ class UserService:
     def decrypt(self, token: str) -> str:
         return self.fernet.decrypt(token.encode()).decode()
 
-    def save_user(self, email: str, password: str) -> Dict[str, Any]:
+    def save_user(self, email: str, password: str, platform: Optional[str] = None) -> Dict[str, Any]:
         if not self.supabase.initialized:
             if not self.supabase.initialize():
                 raise RuntimeError("Supabase initialization failed")
 
         encrypted = self.encrypt(password)
         payload = {"email": email, "password": encrypted}
+        if platform:
+            payload["platform"] = platform
 
-        existing = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
+        q = self.supabase.client.table(app_config.users_collection).select("email,platform").eq("email", email)
+        if platform:
+            q = q.eq("platform", platform)
+        existing = q.limit(1).execute()
 
         if existing.data:
             (
                 self.supabase.client
                 .table(app_config.users_collection)
-                .update({"password": encrypted})
+                .update({"password": encrypted, "platform": platform} if platform else {"password": encrypted})
                 .eq("email", email)
                 .execute()
             )
@@ -65,19 +63,16 @@ class UserService:
             data = insert_result.data[0] if insert_result.data else payload
             return {"email": data.get("email"), "password": data.get("password")}
 
-    def update_password(self, email: str, password: str) -> bool:
+    def update_password(self, email: str, password: str, platform: Optional[str] = None) -> bool:
         if not self.supabase.initialized:
             if not self.supabase.initialize():
                 raise RuntimeError("Supabase initialization failed")
 
         encrypted = self.encrypt(password)
-        (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .update({"password": encrypted})
-            .eq("email", email)
-            .execute()
-        )
+        q = self.supabase.client.table(app_config.users_collection).update({"password": encrypted}).eq("email", email)
+        if platform:
+            q = q.eq("platform", platform)
+        q.execute()
         return True
 
     def update_status(self, email: str, status: str) -> bool:
@@ -94,19 +89,15 @@ class UserService:
         )
         return True
 
-    def get_user(self, email: str) -> Optional[Dict[str, Any]]:
+    def get_user(self, email: str, platform: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not self.supabase.initialized:
             if not self.supabase.initialize():
                 raise RuntimeError("Supabase initialization failed")
 
-        result = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email,password")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
+        q = self.supabase.client.table(app_config.users_collection).select("email,password,platform").eq("email", email)
+        if platform:
+            q = q.eq("platform", platform)
+        result = q.limit(1).execute()
         if result.data:
             return result.data[0]
         return None
@@ -125,16 +116,46 @@ class UserService:
         )
         return result.data or []
 
-    def delete_user(self, email: str) -> bool:
+    def delete_user(self, email: str, platform: Optional[str] = None) -> bool:
         if not self.supabase.initialized:
             if not self.supabase.initialize():
                 raise RuntimeError("Supabase initialization failed")
 
+        q = self.supabase.client.table(app_config.users_collection).delete().eq("email", email)
+        if platform:
+            q = q.eq("platform", platform)
+        q.execute()
+        return True
+
+    def update_user(self, email: str, new_email: Optional[str] = None, password: Optional[str] = None, platform: Optional[str] = None) -> bool:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+        update_payload: Dict[str, Any] = {}
+        if new_email:
+            update_payload["email"] = new_email
+        if password is not None:
+            update_payload["password"] = self.encrypt(password)
+        if platform is not None:
+            update_payload["platform"] = platform
+        if not update_payload:
+            return True
+        q = self.supabase.client.table(app_config.users_collection).update(update_payload).eq("email", email)
+        if platform:
+            q = q.eq("platform", platform)
+        q.execute()
+        return True
+
+    def update_by_platform(self, platform: str, email: str, password: str) -> bool:
+        if not self.supabase.initialized:
+            if not self.supabase.initialize():
+                raise RuntimeError("Supabase initialization failed")
+        encrypted = self.encrypt(password)
         (
             self.supabase.client
             .table(app_config.users_collection)
-            .delete()
-            .eq("email", email)
+            .update({"email": email, "password": encrypted})
+            .eq("platform", platform)
             .execute()
         )
         return True

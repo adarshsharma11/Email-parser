@@ -153,10 +153,13 @@ class UserRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     email: str = Field(..., description="User email")
     password: str = Field(..., description="User password")
+    platform: Optional[Platform] = Field(None, description="Credential platform")
 
 class UserUpdateRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    password: str = Field(..., description="User password")
+    new_email: Optional[str] = Field(None, description="New user email")
+    password: Optional[str] = Field(None, description="User password")
+    platform: Optional[Platform] = Field(None, description="Credential platform")
 
 class UserResponse(APIResponse):
     data: Dict[str, Any] = Field(..., description="User data")
@@ -292,4 +295,3 @@ class ActivityRuleLog(BaseModel):
 class ActivityRuleLogListResponse(APIResponse):
     """Response model for list of activity rule logs."""
     data: List[ActivityRuleLog] = Field(..., description="List of activity rule logs")
-
