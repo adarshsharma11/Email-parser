@@ -71,8 +71,11 @@ class BookingParser:
             extracted_data = self._extract_data(email_data)
 
             # Fallback: if reservation_id missing, use email_id to ensure booking capture
-            if not extracted_data.get('reservation_id'):
-                extracted_data['reservation_id'] = str(email_data.email_id)
+            if not extracted_data.get("reservation_id"):
+                if email_data.platform == Platform.AIRBNB and extracted_data.get("booking_type") == "inquiry":
+                    extracted_data["reservation_id"] = f"INQ-{email_data.email_id}"
+                else:
+                    extracted_data["reservation_id"] = str(email_data.email_id)
 
             booking_data = BookingData(
                 reservation_id=extracted_data['reservation_id'],
@@ -138,13 +141,17 @@ class BookingParser:
                     pass
 
         elif email_data.platform == Platform.AIRBNB:
+            if re.search(r'\bInquiry\b', subject, re.IGNORECASE):
+                extracted_data["booking_type"] = "inquiry"
+            else:
+                extracted_data["booking_type"] = "booking"
             match = re.search(r'Reservation\s*([A-Z0-9]+)', subject)
             if match:
                 extracted_data['reservation_id'] = match.group(1)
 
-            match = re.search(r'for (.*?) from', subject)
-            if match:
-                extracted_data['guest_name'] = match.group(1).strip()
+            # match = re.search(r'for (.*?) from', subject)
+            # if match:
+            #     extracted_data['guest_name'] = match.group(1).strip()
             match = re.search(r'at\s+(.+?)(?:\s+(?:from|—|-)|$)', subject)
             if match:
                 extracted_data['property_name'] = match.group(1).strip()
@@ -158,6 +165,14 @@ class BookingParser:
             if match:
                 extracted_data['guest_name'] = match.group(1).strip()
 
+            # ---- PROTECT AIRBNB INQUIRY FIELDS FROM REGEX ----
+            platform_patterns = self.patterns.get(email_data.platform, {})
+
+            if email_data.platform == Platform.AIRBNB and extracted_data.get("booking_type") == "inquiry":
+                platform_patterns = {
+                    k: v for k, v in platform_patterns.items()
+                    if k not in ("guest_name", "guest_email", "reservation_id")
+                }
         # ---- BODY/HTML REGEX FALLBACKS ----
         platform_patterns = self.patterns.get(email_data.platform, {})
         for field, patterns in platform_patterns.items():
@@ -206,6 +221,12 @@ class BookingParser:
         html_data: Dict[str, Any] = {}
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
+            h2_tags = soup.find_all("h2")
+            for h2 in h2_tags:
+                name = h2.get_text(strip=True)
+                if name and name.isalpha() and len(name) >= 3:
+                    html_data["guest_name"] = name
+                    break
             tables = soup.find_all('table')
             for table in tables:
                 for row in table.find_all('tr'):

@@ -258,6 +258,29 @@ class SupabaseClient:
         except Exception as e:
             self.logger.error("Failed to create cleaning task", booking_id=booking_id, property_id=property_id, error=str(e))
             return None
+    
+    def get_cleaning_tasks_by_reservation_id(self, reservation_id: str) -> List[Dict[str, Any]]:
+        try:
+            if not self.initialized and not self.initialize():
+                return []
+            res = (
+                self.client.table(app_config.cleaning_tasks_collection)
+                .select("*")
+                .eq("reservation_id", reservation_id)
+                .execute()
+            )
+            if hasattr(res, "data"):
+                return res.data or []
+            if hasattr(res, "json") and callable(res.json):
+                return res.json().get("data", []) or []
+            return getattr(res, "json", {}).get("data", []) or []
+        except Exception as e:
+            self.logger.error("Error fetching cleaning tasks by reservation", reservation_id=reservation_id, error=str(e))
+            return []
+    
+    def exists_cleaning_task_for_reservation(self, reservation_id: str) -> bool:
+        tasks = self.get_cleaning_tasks_by_reservation_id(reservation_id)
+        return bool(tasks)
     def get_booking_by_reservation_id(self, reservation_id: str) -> Optional[Dict[str, Any]]:
         try:
             if not self.initialized and not self.initialize():

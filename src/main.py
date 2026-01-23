@@ -133,6 +133,7 @@ class BookingAutomation:
             # Process each email
             successful_bookings = []
             failed_emails = []
+            parsed_details = []
             
             for email_data in emails:
                 try:
@@ -141,11 +142,23 @@ class BookingAutomation:
                     self.booking_logger.log_email_processed(platform_name, email_data.email_id)
                     
                     # Parse email
+                    print(email_data)
+
                     parse_result = self.booking_parser.parse_email(email_data)
                     
                     if parse_result.success and parse_result.booking_data:
                         self.booking_logger.log_booking_parsed(parse_result.booking_data.to_dict())
                         successful_bookings.append(parse_result.booking_data)
+                        bd = parse_result.booking_data
+                        parsed_details.append({
+                            'email_id': bd.email_id,
+                            'platform': bd.platform.value if bd.platform else None,
+                            'reservation_id': bd.reservation_id,
+                            'guest_name': bd.guest_name,
+                            'guest_email': bd.guest_email,
+                            'property_name': bd.property_name,
+                            'property_id': bd.property_id,
+                        })
                     else:
                         failed_emails.append({
                             'email_id': email_data.email_id,
@@ -193,18 +206,51 @@ class BookingAutomation:
                                     Exception("Failed to send welcome notification"),
                                     f"Notification failed for booking {sync_result.reservation_id}"
                                 )
+                            try:
+                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
+                                from src.utils.crew import pick_crew_round_robin
+                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
+                                crew_id = crew.get("id") if crew else None
+                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
+                                task = self.firestore_client.create_cleaning_task(
+                                    booking_id=successful_bookings[i].reservation_id,
+                                    property_id=task_property,
+                                    scheduled_date=scheduled_date,
+                                    crew_id=crew_id
+                                )
+                                notify_success = self.notifier.notify_cleaning_task(crew, task)
+                                if not notify_success:
+                                    self.booking_logger.log_error(
+                                        Exception("Failed to send cleaning notification"),
+                                        f"Notification failed for task {task['id'] if task else 'unknown'}"
+                                    )
+                                if crew and task:
+                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
+                                    if event_id:
+                                        self.logger.info(
+                                            "Cleaning event scheduled",
+                                            event_id=event_id,
+                                            task_id=task["id"],
+                                            property=successful_bookings[i].property_name
+                                        )
+                            except Exception as e:
+                                self.booking_logger.log_error(e, f"Failed to assign cleaning for booking {successful_bookings[i].reservation_id}")
                         else:
                             event_id = self.calendar_client.add_booking_event(dummy_booking)
-                            updates = {}
-                            if successful_bookings[i].property_id:
-                                updates["property_id"] = successful_bookings[i].property_id
-                            if successful_bookings[i].property_name:
-                                updates["property_name"] = successful_bookings[i].property_name
-                            if updates:
-                                try:
-                                    self.firestore_client.update_booking(successful_bookings[i].reservation_id, updates)
-                                except Exception:
-                                    pass
+                        updates = {}
+                        if successful_bookings[i].guest_name and successful_bookings[i].guest_name != "Unknown Guest":
+                            updates["guest_name"] = successful_bookings[i].guest_name
+                        if successful_bookings[i].guest_email:
+                            updates["guest_email"] = successful_bookings[i].guest_email
+                        if successful_bookings[i].property_id:
+                            updates["property_id"] = successful_bookings[i].property_id
+                        if successful_bookings[i].property_name:
+                            updates["property_name"] = successful_bookings[i].property_name
+                        if updates:
+                            try:
+                                self.firestore_client.update_booking(successful_bookings[i].reservation_id, updates)
+                            except Exception:
+                                pass
                         if event_id:
                             self.logger.info(
                                 "Google Calendar booking event created",
@@ -212,6 +258,42 @@ class BookingAutomation:
                                 reservation_id=dummy_booking.reservation_id
                             )
 
+                        existing_tasks = self.firestore_client.get_cleaning_tasks_by_reservation_id(successful_bookings[i].reservation_id)
+                        if not existing_tasks:
+                            try:
+                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
+                                if scheduled_date is None:
+                                    scheduled_date = datetime.utcnow().date()
+                                from src.utils.crew import pick_crew_round_robin
+                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
+                                crew_id = crew.get("id") if crew else None
+                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
+                                task = self.firestore_client.create_cleaning_task(
+                                    booking_id=successful_bookings[i].reservation_id,
+                                    property_id=task_property,
+                                    scheduled_date=scheduled_date,
+                                    crew_id=crew_id
+                                )
+                                if crew and task:
+                                    notify_success = self.notifier.notify_cleaning_task(crew, task)
+                                    if not notify_success:
+                                        self.booking_logger.log_error(
+                                            Exception("Failed to send cleaning notification"),
+                                            f"Notification failed for task {task['id'] if task else 'unknown'}"
+                                        )
+                                if crew and task:
+                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
+                                    if event_id:
+                                        self.logger.info(
+                                            "Cleaning event scheduled",
+                                            event_id=event_id,
+                                            task_id=task["id"],
+                                            property=successful_bookings[i].property_name
+                                        )
+                            except Exception as e:
+                                self.booking_logger.log_error(e, f"Failed to assign cleaning for booking {successful_bookings[i].reservation_id}")
+
+                        block_event = None
                         # Block the dates on the calendar
                         block_event = self.calendar_client.block_dates(
                             property_id=dummy_booking.property_name,
@@ -233,51 +315,37 @@ class BookingAutomation:
 
                     if block_event:
                         try:
-                            # Calculate cleaning date (same as check_out)
-                            scheduled_date = successful_bookings[i].check_out_date  
-                            # Get active crew for property
-                            from src.utils.crew import pick_crew_round_robin
-                            crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_name)
-                            crew_id = crew.get("id") if crew else None
-                            
-                            if not crew:
-                                self.logger.warning(
-                                    "No active crew found for property, creating task without crew assignment",
-                                    property=successful_bookings[i].property_name
+                            existing_tasks_block = self.firestore_client.get_cleaning_tasks_by_reservation_id(successful_bookings[i].reservation_id)
+                            if not existing_tasks_block:
+                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
+                                if scheduled_date is None:
+                                    scheduled_date = datetime.utcnow().date()
+                                from src.utils.crew import pick_crew_round_robin
+                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
+                                crew_id = crew.get("id") if crew else None
+                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
+                                task = self.firestore_client.create_cleaning_task(
+                                    booking_id=successful_bookings[i].reservation_id,
+                                    property_id=task_property,
+                                    scheduled_date=scheduled_date,
+                                    crew_id=crew_id
                                 )
-
-                            # Create cleaning task in Supabase
-                            task = self.firestore_client.create_cleaning_task(
-                                            booking_id=successful_bookings[i].reservation_id,
-                                            property_id=dummy_booking.property_name,
-                                            scheduled_date=scheduled_date,
-                                            crew_id=crew_id
-                                    )
-                            # Note: Notification temporarily disabled to avoid service account issues
-                            # notify_success = True  # Placeholder for notification success
-                            notify_success = self.notifier.notify_cleaning_task(crew, task)
-                            if not notify_success:
-                                self.logger.warning(
-                                    "Failed to send cleaning notification",
-                                    task_id=task["id"] if task else None
-                                )
-                                self.booking_logger.log_error(
-                                    Exception("Failed to send cleaning notification"),
-                                    f"Notification failed for task {task['id'] if task else 'unknown'}"
-                                )
-                            if crew and task:
-                                # Add cleaning event in Google Calendar
-                                self.logger.info("About to call add_cleaning_event", crew_type=type(crew), crew_value=crew, task_type=type(task), task_value=task)
-                                event_id = self.calendar_client.add_cleaning_event(crew, task)
-                                if event_id:
-                                    # Update Supabase with calendar event ID
-                                    # self.firestore_client.update_cleaning_task(task["id"], {"calendar_event_id": event_id})
-                                    self.logger.info(
-                                        "Cleaning event scheduled",
-                                        event_id=event_id,
-                                        task_id=task["id"],
-                                        property=successful_bookings[i].property_name
-                                    )
+                                if crew and task:
+                                    notify_success = self.notifier.notify_cleaning_task(crew, task)
+                                    if not notify_success:
+                                        self.booking_logger.log_error(
+                                            Exception("Failed to send cleaning notification"),
+                                            f"Notification failed for task {task['id'] if task else 'unknown'}"
+                                        )
+                                if crew and task:
+                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
+                                    if event_id:
+                                        self.logger.info(
+                                            "Cleaning event scheduled",
+                                            event_id=event_id,
+                                            task_id=task["id"],
+                                            property=successful_bookings[i].property_name
+                                        )
                         except Exception as e:
                             self.booking_logger.log_error(e, f"Failed to schedule cleaning for booking {successful_bookings[i].reservation_id}")    
             
@@ -297,7 +365,8 @@ class BookingAutomation:
                 'duplicate_bookings': len([r for r in sync_results if r.success and not r.is_new]),
                 'failed_emails': failed_emails,
                 'sync_errors': [r for r in sync_results if not r.success],
-                'dry_run': dry_run
+                'dry_run': dry_run,
+                'parsed_bookings': parsed_details
             }
             
         except Exception as e:
@@ -391,6 +460,10 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
         click.echo(f"  Duplicate bookings: {results['duplicate_bookings']}")
         click.echo(f"  Failed emails: {len(results['failed_emails'])}")
         click.echo(f"  Sync errors: {len(results['sync_errors'])}")
+        if results.get('parsed_bookings'):
+            click.echo("\nParsed bookings (up to 10):")
+            for item in results['parsed_bookings'][:10]:
+                click.echo(f"  - email_id={item['email_id']}, platform={item['platform']}, reservation_id={item['reservation_id']}, guest_name={item['guest_name']}, guest_email={item['guest_email']}, property_name={item['property_name']}, property_id={item['property_id']}")
         
         if dry_run:
             click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to database")
