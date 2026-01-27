@@ -119,6 +119,14 @@ class BookingParser:
         extracted_data: Dict[str, Any] = {}
         content = f"{email_data.body_text}\n{email_data.body_html}"
         subject = email_data.subject or ""
+        
+        # ---- STATUS DETECTION (e.g., cancellations) ----
+        try:
+            cancel_pattern = r'\b(cancelled|canceled|cancellation|booking\s+canceled)\b'
+            if re.search(cancel_pattern, subject, re.IGNORECASE) or re.search(cancel_pattern, content, re.IGNORECASE):
+                extracted_data['status'] = 'cancelled'
+        except Exception:
+            pass
 
         # ---- SUBJECT LINE EXTRACTION ----
         if email_data.platform == Platform.VRBO:
