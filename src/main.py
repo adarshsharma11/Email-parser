@@ -151,10 +151,10 @@ class BookingAutomation:
                         self.booking_logger.log_booking_parsed(bd.to_dict())
                         # Filter: only real bookings (skip inquiries/non-bookings)
                         booking_type = (bd.raw_data or {}).get("booking_type")
-                        if booking_type == "inquiry":
+                        if booking_type in ("inquiry", "other"):
                             failed_emails.append({
                                 'email_id': email_data.email_id,
-                                'error': "Skipped inquiry email",
+                                'error': "Skipped non-booking email",
                                 'platform': platform_name
                             })
                             continue
@@ -171,15 +171,12 @@ class BookingAutomation:
                                 'platform': platform_name
                             })
                             continue
-                        # Validate required fields: guest name/email and property name/id
-                        is_valid = (
-                            (bool(bd.guest_email) or (bd.guest_name is not None and bd.guest_name != "Unknown Guest")) and
-                            (bool(bd.property_id) or bool(bd.property_name))
-                        )
+                        # Validate required fields: must have property_id and both dates
+                        is_valid = bool(bd.property_id) and bool(bd.check_in_date) and bool(bd.check_out_date)
                         if not is_valid:
                             failed_emails.append({
                                 'email_id': email_data.email_id,
-                                'error': "Missing required fields (guest/property), skipped",
+                                'error': "Missing required fields (dates/property_id), skipped",
                                 'platform': platform_name
                             })
                             continue
@@ -272,10 +269,7 @@ class BookingAutomation:
                         else:
                             event_id = self.calendar_client.add_booking_event(dummy_booking)
                         updates = {}
-                        if successful_bookings[i].guest_name and successful_bookings[i].guest_name != "Unknown Guest":
-                            updates["guest_name"] = successful_bookings[i].guest_name
-                        if successful_bookings[i].guest_email:
-                            updates["guest_email"] = successful_bookings[i].guest_email
+                        # Skip guest updates
                         if successful_bookings[i].property_id:
                             updates["property_id"] = successful_bookings[i].property_id
                         if successful_bookings[i].property_name:
