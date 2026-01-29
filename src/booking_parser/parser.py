@@ -24,7 +24,12 @@ class BookingParser:
                     r'Confirmation[:\s]*([A-Z0-9\-]+)',
                     r'Booking[:\s]*([A-Z0-9\-]+)'
                 ],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)',
+                    r'Traveler[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_phone': [r'Phone[:\s]*([0-9\-\+\(\)\s]+)'],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_id': [r'Property ID[:\s]*([A-Z0-9\-]+)'],
@@ -34,14 +39,22 @@ class BookingParser:
             },
             Platform.AIRBNB: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
                 'total_amount': [r'Total[:\s]*\$?([0-9,]+\.?[0-9]*)']
             },
             Platform.BOOKING: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_name': [r'Property[:\s]*([A-Za-z0-9\s\-\.]+)'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
@@ -49,7 +62,11 @@ class BookingParser:
             },
             Platform.PLUMGUIDE: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_name': [r'Property[:\s]*([A-Za-z0-9\s\-\.]+)'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
@@ -267,8 +284,8 @@ class BookingParser:
                 if ci and co and co > ci:
                     ci_sel, co_sel = ci, co
             if ci_sel is None or co_sel is None:
-                m_ci = re.search(rf'(check[\s-]?in|arrival|start\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
-                m_co = re.search(rf'(check[\s-]?out|departure|end\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
+                m_ci = re.search(rf'(check[\s-]?in|arrival|arrive|start\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
+                m_co = re.search(rf'(check[\s-]?out|departure|depart|end\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
                 if m_ci and m_co:
                     ci = self._parse_date(m_ci.group(2))
                     co = self._parse_date(m_co.group(2))
