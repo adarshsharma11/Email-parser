@@ -147,9 +147,40 @@ class BookingAutomation:
                     parse_result = self.booking_parser.parse_email(email_data)
                     
                     if parse_result.success and parse_result.booking_data:
-                        self.booking_logger.log_booking_parsed(parse_result.booking_data.to_dict())
-                        successful_bookings.append(parse_result.booking_data)
                         bd = parse_result.booking_data
+                        self.booking_logger.log_booking_parsed(bd.to_dict())
+                        # Filter: only real bookings (skip inquiries/non-bookings)
+                        booking_type = (bd.raw_data or {}).get("booking_type")
+                        if booking_type in ("inquiry", "other"):
+                            failed_emails.append({
+                                'email_id': email_data.email_id,
+                                'error': "Skipped non-booking email",
+                                'platform': platform_name
+                            })
+                            continue
+                        # If cancellation detected, update status and skip insertion
+                        status = (bd.raw_data or {}).get("status")
+                        if status == "cancelled":
+                            try:
+                                self.firestore_client.update_booking(bd.reservation_id, {"status": "cancelled"})
+                            except Exception:
+                                pass
+                            failed_emails.append({
+                                'email_id': email_data.email_id,
+                                'error': "Cancellation detected, status updated",
+                                'platform': platform_name
+                            })
+                            continue
+                        # Validate required fields: must have property_id and both dates
+                        is_valid = bool(bd.property_id) and bool(bd.check_in_date) and bool(bd.check_out_date)
+                        if not is_valid:
+                            failed_emails.append({
+                                'email_id': email_data.email_id,
+                                'error': "Missing required fields (dates/property_id), skipped",
+                                'platform': platform_name
+                            })
+                            continue
+                        successful_bookings.append(bd)
                         parsed_details.append({
                             'email_id': bd.email_id,
                             'platform': bd.platform.value if bd.platform else None,
@@ -224,7 +255,7 @@ class BookingAutomation:
                                         Exception("Failed to send cleaning notification"),
                                         f"Notification failed for task {task['id'] if task else 'unknown'}"
                                     )
-                                if crew and task:
+                                if crew and task and successful_bookings[i].property_id:
                                     event_id = self.calendar_client.add_cleaning_event(crew, task)
                                     if event_id:
                                         self.logger.info(
@@ -238,10 +269,7 @@ class BookingAutomation:
                         else:
                             event_id = self.calendar_client.add_booking_event(dummy_booking)
                         updates = {}
-                        if successful_bookings[i].guest_name and successful_bookings[i].guest_name != "Unknown Guest":
-                            updates["guest_name"] = successful_bookings[i].guest_name
-                        if successful_bookings[i].guest_email:
-                            updates["guest_email"] = successful_bookings[i].guest_email
+                        # Skip guest updates
                         if successful_bookings[i].property_id:
                             updates["property_id"] = successful_bookings[i].property_id
                         if successful_bookings[i].property_name:
@@ -281,7 +309,7 @@ class BookingAutomation:
                                             Exception("Failed to send cleaning notification"),
                                             f"Notification failed for task {task['id'] if task else 'unknown'}"
                                         )
-                                if crew and task:
+                                if crew and task and successful_bookings[i].property_id:
                                     event_id = self.calendar_client.add_cleaning_event(crew, task)
                                     if event_id:
                                         self.logger.info(
@@ -337,7 +365,7 @@ class BookingAutomation:
                                             Exception("Failed to send cleaning notification"),
                                             f"Notification failed for task {task['id'] if task else 'unknown'}"
                                         )
-                                if crew and task:
+                                if crew and task and successful_bookings[i].property_id:
                                     event_id = self.calendar_client.add_cleaning_event(crew, task)
                                     if event_id:
                                         self.logger.info(

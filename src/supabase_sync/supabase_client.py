@@ -4,6 +4,7 @@ Supabase client helper for syncing vacation rental booking data.
 from datetime import datetime, date, timezone
 from typing import Optional, Dict, Any, List
 import structlog
+import uuid
 
 try:
     from supabase import create_client  # type: ignore
@@ -72,55 +73,84 @@ class SupabaseClient:
                     reservation_id=booking_data.reservation_id,
                 )
 
-            # Duplicate check only by email_id (requested behavior)
+            # STRICT Logic: Only update if Property + Dates match exactly.
             existing = None
-            if getattr(booking_data, "email_id", None):
-                existing = self.get_booking_by_email_id(booking_data.email_id)  # type: ignore
-            # Fallback to reservation_id if email_id is missing
-            if existing is None:
-                existing = self.get_booking_by_reservation_id(booking_data.reservation_id)
-            if existing is not None:
-                self.logger.info("Booking already exists in Supabase", email_id=booking_data.email_id, reservation_id=booking_data.reservation_id)
-                return SyncResult(
-                    success=True,
-                    is_new=False,
-                    booking_data=booking_data,
-                    reservation_id=booking_data.reservation_id,
+            if booking_data.property_id and booking_data.check_in_date and booking_data.check_out_date:
+                existing = self.get_booking_by_property_and_dates(
+                    booking_data.property_id,
+                    booking_data.check_in_date,
+                    booking_data.check_out_date
                 )
 
-            if dry_run:
-                self.logger.info("DRY RUN: Would add new booking to Supabase", reservation_id=booking_data.reservation_id)
-                return SyncResult(
-                    success=True,
-                    is_new=True,
-                    booking_data=booking_data,
-                    reservation_id=booking_data.reservation_id,
-                )
+            if existing:
+                # UPDATE
+                self.logger.info("Booking exists (Property+Dates match) - Updating", 
+                               reservation_id=existing.get("reservation_id"))
+                
+                # Use existing reservation_id to overwrite correct row
+                booking_data.reservation_id = existing["reservation_id"]
+                
+                if dry_run:
+                     self.logger.info("DRY RUN: Would update booking", reservation_id=booking_data.reservation_id)
+                     return SyncResult(
+                         success=True, 
+                         is_new=False, 
+                         booking_data=booking_data, 
+                         reservation_id=booking_data.reservation_id
+                     )
 
-            # Serialize payload
-            payload = booking_data.to_dict()
-            payload["updated_at"] = datetime.utcnow()
-            payload = self._serialize_payload(payload)
+                payload = booking_data.to_dict()
+                payload["updated_at"] = datetime.utcnow()
+                # Ensure we use the ID from DB
+                payload["reservation_id"] = existing["reservation_id"]
+                payload = self._serialize_payload(payload)
+                
+                self.client.table(app_config.bookings_collection).upsert(payload, on_conflict="reservation_id").execute()
+                is_new = False
+                
+            else:
+                # INSERT (New Booking)
+                # Check for reservation_id collision with DIFFERENT dates
+                collision = self.get_booking_by_reservation_id(booking_data.reservation_id)
+                
+                if collision:
+                    # If we are here, it means dates didn't match (existing is None), but ID exists.
+                    # We must NOT overwrite the collision.
+                    original_id = booking_data.reservation_id
+                    booking_data.reservation_id = f"{original_id}_{uuid.uuid4().hex[:4]}"
+                    self.logger.warning("Reservation ID collision with different dates. Generated new ID to avoid overwrite.", 
+                                      original_id=original_id, new_id=booking_data.reservation_id)
+                
+                if dry_run:
+                     self.logger.info("DRY RUN: Would insert new booking", reservation_id=booking_data.reservation_id)
+                     return SyncResult(
+                         success=True, 
+                         is_new=True, 
+                         booking_data=booking_data, 
+                         reservation_id=booking_data.reservation_id
+                     )
 
-            # Insert or upsert
-            resp = (
-                self.client.table(app_config.bookings_collection)
-                .upsert(payload, on_conflict="reservation_id")
-                .execute()
-            )
+                payload = booking_data.to_dict()
+                payload["updated_at"] = datetime.utcnow()
+                payload = self._serialize_payload(payload)
+                
+                self.client.table(app_config.bookings_collection).insert(payload).execute()
+                is_new = True
 
             self.logger.info(
                 "Successfully synced booking to Supabase",
                 reservation_id=booking_data.reservation_id,
                 platform=booking_data.platform.value,
+                action="update" if not is_new else "insert"
             )
-            is_new = existing is None
+            
             return SyncResult(
                 success=True,
                 is_new=is_new,
                 booking_data=booking_data,
                 reservation_id=booking_data.reservation_id,
             )
+
         except Exception as e:
             self.logger.error(
                 "Error syncing booking to Supabase",
@@ -569,6 +599,48 @@ class SupabaseClient:
         except Exception as e:
             self.logger.error("Error getting booking statistics", error=str(e))
             return {}
+
+    def get_booking_by_property_and_dates(self, property_id: str, check_in: datetime, check_out: datetime) -> Optional[Dict[str, Any]]:
+        try:
+            if not self.initialized and not self.initialize():
+                return None
+            
+            # Fetch all bookings for this property to perform robust date comparison in Python
+            # This avoids issues with DB date format vs ISO string mismatch
+            res = (
+                self.client.table(app_config.bookings_collection)
+                .select("*")
+                .eq("property_id", property_id)
+                .execute()
+            )
+            rows = getattr(res, "data", []) or getattr(res, "json", {}).get("data", [])
+            
+            # Get target dates as date objects
+            target_ci = check_in.date() if hasattr(check_in, "date") else check_in
+            target_co = check_out.date() if hasattr(check_out, "date") else check_out
+            
+            for row in rows:
+                try:
+                    # Safely parse DB dates (handle YYYY-MM-DD or ISO with time)
+                    r_ci_str = str(row.get("check_in_date", ""))
+                    r_co_str = str(row.get("check_out_date", ""))
+                    
+                    if len(r_ci_str) < 10 or len(r_co_str) < 10:
+                        continue
+                        
+                    # Extract YYYY-MM-DD part
+                    row_ci = datetime.strptime(r_ci_str[:10], "%Y-%m-%d").date()
+                    row_co = datetime.strptime(r_co_str[:10], "%Y-%m-%d").date()
+                    
+                    if row_ci == target_ci and row_co == target_co:
+                        return row
+                except Exception:
+                    continue
+            
+            return None
+        except Exception as e:
+            self.logger.error("Error getting booking by property and dates", property_id=property_id, error=str(e))
+            return None
 
     # Context manager helpers
     def __enter__(self):

@@ -24,7 +24,12 @@ class BookingParser:
                     r'Confirmation[:\s]*([A-Z0-9\-]+)',
                     r'Booking[:\s]*([A-Z0-9\-]+)'
                 ],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)',
+                    r'Traveler[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_phone': [r'Phone[:\s]*([0-9\-\+\(\)\s]+)'],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_id': [r'Property ID[:\s]*([A-Z0-9\-]+)'],
@@ -34,14 +39,22 @@ class BookingParser:
             },
             Platform.AIRBNB: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
                 'total_amount': [r'Total[:\s]*\$?([0-9,]+\.?[0-9]*)']
             },
             Platform.BOOKING: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_name': [r'Property[:\s]*([A-Za-z0-9\s\-\.]+)'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
@@ -49,7 +62,11 @@ class BookingParser:
             },
             Platform.PLUMGUIDE: {
                 'reservation_id': [r'Reservation[:\s]*([A-Z0-9\-]+)'],
-                'guest_name': [r'Guest[:\s]*([A-Za-z\s]+)'],
+                'guest_name': [
+                    r'Guest[:\s]*([A-Za-z\s]+)',
+                    r'Guest Name[:\s]*([A-Za-z\s]+)',
+                    r'Booked by[:\s]*([A-Za-z\s]+)'
+                ],
                 'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'property_name': [r'Property[:\s]*([A-Za-z0-9\s\-\.]+)'],
                 'number_of_guests': [r'Guests[:\s]*(\d+)'],
@@ -119,6 +136,34 @@ class BookingParser:
         extracted_data: Dict[str, Any] = {}
         content = f"{email_data.body_text}\n{email_data.body_html}"
         subject = email_data.subject or ""
+        
+        # ---- STATUS DETECTION (e.g., cancellations) ----
+        try:
+            cancel_pattern = r'\b(cancelled|canceled|cancellation|booking\s+canceled)\b'
+            if re.search(cancel_pattern, subject, re.IGNORECASE) or re.search(cancel_pattern, content, re.IGNORECASE):
+                extracted_data['status'] = 'cancelled'
+        except Exception:
+            pass
+        
+        # ---- BOOKING TYPE ----
+        try:
+            subj_lower = subject.lower()
+            if "inquiry" in subj_lower:
+                extracted_data["booking_type"] = "inquiry"
+            elif any(k in subj_lower for k in ["reservation", "booking", "confirmed", "confirmation", "itinerary", "trip details"]):
+                extracted_data["booking_type"] = "booking"
+            else:
+                extracted_data["booking_type"] = "other"
+        except Exception:
+            extracted_data["booking_type"] = "other"
+        
+        # ---- EXTRA MESSAGE ----
+        try:
+            msg = (email_data.body_text or "").strip()
+            if msg:
+                extracted_data["extra_message"] = msg
+        except Exception:
+            pass
 
         # ---- SUBJECT LINE EXTRACTION ----
         if email_data.platform == Platform.VRBO:
@@ -141,20 +186,18 @@ class BookingParser:
                     pass
 
         elif email_data.platform == Platform.AIRBNB:
-            if re.search(r'\bInquiry\b', subject, re.IGNORECASE):
-                extracted_data["booking_type"] = "inquiry"
-            else:
-                extracted_data["booking_type"] = "booking"
-            match = re.search(r'Reservation\s*([A-Z0-9]+)', subject)
+            match = re.search(r'Reservation\s+(?!for\b)([A-Z0-9\-]+)', subject)
             if match:
                 extracted_data['reservation_id'] = match.group(1)
 
-            # match = re.search(r'for (.*?) from', subject)
-            # if match:
-            #     extracted_data['guest_name'] = match.group(1).strip()
-            match = re.search(r'at\s+(.+?)(?:\s+(?:from|—|-)|$)', subject)
-            if match:
-                extracted_data['property_name'] = match.group(1).strip()
+            if extracted_data.get("booking_type") == "booking":
+                m_at = re.search(r'at\s+(.+?)(?:\s+(?:from|—|-|–)|,|$)', subject)
+                if m_at:
+                    extracted_data['property_name'] = m_at.group(1).strip()
+                else:
+                    m_for = re.search(r'Reservation\s+for\s+(.+?)(?:\s+(?:from|—|-|–)|,|$)', subject, re.IGNORECASE)
+                    if m_for:
+                        extracted_data['property_name'] = m_for.group(1).strip()
 
         elif email_data.platform == Platform.BOOKING:
             match = re.search(r'Booking number\s*([0-9]+)', subject)
@@ -185,6 +228,28 @@ class BookingParser:
                     if value:
                         extracted_data[field] = value
                         break
+        # ---- GUEST NAME FALLBACKS ----
+        if 'guest_name' not in extracted_data:
+            try:
+                m_guest = re.search(r'\bGuest(?!s)\s*[:\-]?\s*([A-Za-z][A-Za-z\s\'\-]{1,60})', content, re.IGNORECASE)
+                if m_guest:
+                    name = m_guest.group(1).strip()
+                    name = re.split(r'\b(Check-?in|Check-?out|Phone|Email|GUESTS|Guests|Adults|Children)\b', name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                    if len(name) >= 2:
+                        extracted_data['guest_name'] = name
+                if 'guest_name' not in extracted_data:
+                    m_traveler = re.search(r'\bTraveler\s*[:\-]?\s*([A-Za-z][A-Za-z\s\'\-]{1,60})', content, re.IGNORECASE)
+                    if m_traveler:
+                        name = m_traveler.group(1).strip()
+                        name = re.split(r'\b(Check-?in|Check-?out|Phone|Email|GUESTS|Guests|Adults|Children)\b', name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                        if len(name) >= 2:
+                            extracted_data['guest_name'] = name
+                if 'guest_name' not in extracted_data:
+                    m_booker = re.search(r'\b([A-Z][A-Za-z\'\-]{2,})\s+Booker\b', content)
+                    if m_booker:
+                        extracted_data['guest_name'] = m_booker.group(1).strip()
+            except Exception:
+                pass
 
         # ---- DATE EXTRACTION ----
         dates = self._extract_dates(email_data.body_html)
@@ -204,14 +269,54 @@ class BookingParser:
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             text = soup.get_text(" ")
-
-            match = re.findall(r'(\w+ \d{1,2}, \d{4})', text)
-            if len(match) >= 2:
-                ci = self._parse_date(match[0])
-                co = self._parse_date(match[1])
-                if ci and co:
-                    dates['check_in_date'] = ci
-                    dates['check_out_date'] = co
+            date_word = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?'
+            d1 = rf'{date_word}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,\s*\d{{4}}|\s+\d{{4}})?'
+            d2 = r'\d{1,2}\s+' + date_word + r'(?:,\s*\d{4}|\s+\d{4})'
+            d3 = r'\d{4}[-/]\d{2}[-/]\d{2}'
+            d4 = r'\d{1,2}/\d{1,2}/\d{4}'
+            dp = rf'(?:{d1}|{d2}|{d3}|{d4})'
+            ci_sel = None
+            co_sel = None
+            m_from_to = re.search(rf'(?:from|between)\s*({dp}).*?(?:to|until|–|-|—)\s*({dp})', text, re.IGNORECASE | re.DOTALL)
+            if m_from_to:
+                ci = self._parse_date(m_from_to.group(1))
+                co = self._parse_date(m_from_to.group(2))
+                if ci and co and co > ci:
+                    ci_sel, co_sel = ci, co
+            if ci_sel is None or co_sel is None:
+                m_ci = re.search(rf'(check[\s-]?in|arrival|arrive|start\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
+                m_co = re.search(rf'(check[\s-]?out|departure|depart|end\s+date)\s*[:\-]?\s*({dp})', text, re.IGNORECASE)
+                if m_ci and m_co:
+                    ci = self._parse_date(m_ci.group(2))
+                    co = self._parse_date(m_co.group(2))
+                    if ci and co and co > ci:
+                        ci_sel, co_sel = ci, co
+            if ci_sel is None or co_sel is None:
+                candidates = []
+                for m in re.finditer(dp, text, re.IGNORECASE):
+                    ds = m.group(0)
+                    dt = self._parse_date(ds)
+                    if dt:
+                        candidates.append((m.start(), ds, dt))
+                candidates.sort(key=lambda x: x[0])
+                for i in range(len(candidates) - 1):
+                    ci_dt = candidates[i][2]
+                    co_dt = candidates[i + 1][2]
+                    if co_dt > ci_dt:
+                        ci_sel, co_sel = ci_dt, co_dt
+                        break
+            if ci_sel and co_sel:
+                time_matches = re.findall(r'(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))', text)
+                if len(time_matches) >= 2:
+                    try:
+                        t_ci = datetime.strptime(time_matches[0].upper().replace(' ', ''), "%I:%M%p").time()
+                        t_co = datetime.strptime(time_matches[1].upper().replace(' ', ''), "%I:%M%p").time()
+                        ci_sel = datetime(ci_sel.year, ci_sel.month, ci_sel.day, t_ci.hour, t_ci.minute)
+                        co_sel = datetime(co_sel.year, co_sel.month, co_sel.day, t_co.hour, t_co.minute)
+                    except Exception:
+                        pass
+                dates['check_in_date'] = ci_sel
+                dates['check_out_date'] = co_sel
         except Exception as e:
             self.logger.debug("Date extraction error", error=str(e))
         return dates
@@ -221,12 +326,6 @@ class BookingParser:
         html_data: Dict[str, Any] = {}
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
-            h2_tags = soup.find_all("h2")
-            for h2 in h2_tags:
-                name = h2.get_text(strip=True)
-                if name and name.isalpha() and len(name) >= 3:
-                    html_data["guest_name"] = name
-                    break
             tables = soup.find_all('table')
             for table in tables:
                 for row in table.find_all('tr'):
@@ -262,6 +361,11 @@ class BookingParser:
                 for h in soup.find_all(['h1', 'h2', 'h3']):
                     t = h.get_text().strip()
                     if t and len(t.split()) >= 2 and not re.search(r'(reservation|booking)', t, re.IGNORECASE):
+                        date_word = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+                        if re.search(rf'\b{date_word}\b', t, re.IGNORECASE) or re.search(r'\d{1,2}\s*(?:–|-|—)\s*\d{1,2}', t):
+                            continue
+                        if ' Home - ' in t:
+                            t = t.split(' Home - ', 1)[0].strip()
                         html_data['property_name'] = t
                         break
             for a in soup.find_all('a', href=True):
@@ -276,10 +380,26 @@ class BookingParser:
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse common date formats."""
-        date_formats = ["%B %d, %Y", "%b %d, %Y", "%m/%d/%Y", "%Y-%m-%d"]
+        s = date_str.strip()
+        s = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', s)
+        s = re.sub(r'\bSept\b', 'Sep', s)
+        s = re.sub(r'\s*,\s*', ', ', s)
+        s = re.sub(r'\.\b', '', s)
+        date_formats = [
+            "%B %d, %Y",
+            "%b %d, %Y",
+            "%B %d %Y",
+            "%b %d %Y",
+            "%d %B %Y",
+            "%d %b %Y",
+            "%m/%d/%Y",
+            "%d/%m/%Y",
+            "%Y-%m-%d",
+            "%Y/%m/%d"
+        ]
         for fmt in date_formats:
             try:
-                return datetime.strptime(date_str.strip(), fmt)
+                return datetime.strptime(s, fmt)
             except Exception:
                 continue
         return None
@@ -304,5 +424,12 @@ class BookingParser:
                         value = int(re.sub(r'[^\d]', '', value))
                     except Exception:
                         value = None
+                elif key == 'property_name':
+                    month = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t|tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+                    if ',' in value:
+                        parts = [p.strip() for p in value.split(',')]
+                        tail = ','.join(parts[1:])
+                        if re.search(rf'\b{month}\b', tail, re.IGNORECASE) or re.search(r'\d{1,2}\s*(?:–|-|—)\s*\d{1,2}', tail):
+                            value = parts[0]
             cleaned[key] = value
         return cleaned

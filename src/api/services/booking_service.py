@@ -428,6 +428,36 @@ class BookingService:
             total_count = paginated.get("total", 0)
             bookings_data = paginated.get("rows", [])
             
+            # Calculate nights for each booking
+            for booking in bookings_data:
+                check_in = booking.get("check_in_date")
+                check_out = booking.get("check_out_date")
+                
+                if check_in and check_out:
+                    try:
+                        # Parse dates if they are strings
+                        if isinstance(check_in, str):
+                            # Handle potentially Z suffix
+                            check_in_val = check_in.replace('Z', '+00:00')
+                            check_in_dt = datetime.fromisoformat(check_in_val)
+                        else:
+                            check_in_dt = check_in
+                            
+                        if isinstance(check_out, str):
+                            check_out_val = check_out.replace('Z', '+00:00')
+                            check_out_dt = datetime.fromisoformat(check_out_val)
+                        else:
+                            check_out_dt = check_out
+                            
+                        # Calculate difference
+                        d1 = check_in_dt.date() if isinstance(check_in_dt, datetime) else check_in_dt
+                        d2 = check_out_dt.date() if isinstance(check_out_dt, datetime) else check_out_dt
+                        
+                        delta = d2 - d1
+                        booking["night"] = delta.days
+                    except Exception as e:
+                        self.logger.warning(f"Failed to calculate nights for booking {booking.get('reservation_id')}: {e}")
+            
             total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
             
             return {
