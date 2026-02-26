@@ -1,20 +1,18 @@
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from uuid import uuid4
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse
-from ...supabase_sync.supabase_client import SupabaseClient
-from ..models import APIResponse, ErrorResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from config.settings import app_config, api_config
 
 
 class PropertyService:
-    """Service for managing property operations."""
+    """Service for managing property operations using PostgreSQL."""
 
-    def __init__(self):
-        """Initialize property service with Supabase client."""
-        self.supabase_client = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
-    def create_property(
+    async def create_property(
         self,
         name: str,
         address: str | None = None,
@@ -23,19 +21,10 @@ class PropertyService:
         booking_id: str | None = None,
         status: str = "active",
     )-> Dict[str, Any]:
-        """
-        Save a new property and generate its iCal feed URL.
-        """
+        """Save a new property and generate its iCal feed URL."""
         try:
-            # Ensure Supabase client is ready
-            if not self.supabase_client.initialized:
-                if not self.supabase_client.initialize():
-                    raise Exception("Failed to initialize Supabase client")
-
-            # Use base URL from API config
             base_url = api_config.base_url or "http://127.0.0.1:8000"
 
-            # Create property data without manual ID
             property_data = {
                 "name": name,
                 "address": address,
@@ -43,51 +32,102 @@ class PropertyService:
                 "airbnb_id": airbnb_id,
                 "booking_id": booking_id,
                 "status": status,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
             }
 
-            # Insert into Supabase
-            result = (
-                self.supabase_client.client
-                .table(app_config.properties_collection)
-                .insert(property_data)
-                .execute()
-            )
+            columns = ", ".join(property_data.keys())
+            placeholders = ", ".join([f":{k}" for k in property_data.keys()])
+            query = text(f"INSERT INTO {app_config.properties_collection} ({columns}) VALUES ({placeholders}) RETURNING *")
+            
+            result = await self.session.execute(query, property_data)
+            row = result.fetchone()
 
-            if result.data and len(result.data) > 0:
-                inserted_property = result.data[0]
-                # Construct iCal URL using the DB-generated ID
-                inserted_property["ical_feed_url"] = f"{base_url}/property/{inserted_property['id']}.ics"
-                self.supabase_client.client.table(app_config.properties_collection)\
-                .update({"ical_feed_url": inserted_property["ical_feed_url"]})\
-                .eq("id", inserted_property["id"]).execute()
-                return {"success": True, "data": inserted_property}
+            if row:
+                inserted_property = dict(row._mapping)
+                ical_url = f"{base_url}/property/{inserted_property['id']}.ics"
+                
+                update_query = text(f"UPDATE {app_config.properties_collection} SET ical_feed_url = :url WHERE id = :id RETURNING *")
+                result = await self.session.execute(update_query, {"url": ical_url, "id": inserted_property["id"]})
+                row = result.fetchone()
+                return {"success": True, "data": dict(row._mapping)}
             else:
                 raise Exception("Failed to insert property record")
 
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def delete_property(self, property_id: str) -> Dict[str, Any]:
+    async def get_property(self, property_id: int) -> Optional[Dict[str, Any]]:
+        query = text(f"SELECT * FROM {app_config.properties_collection} WHERE id = :id")
+        result = await self.session.execute(query, {"id": property_id})
+        row = result.fetchone()
+        return dict(row._mapping) if row else None
+
+    async def list_properties(self) -> List[Dict[str, Any]]:
+        query = text(f"SELECT * FROM {app_config.properties_collection}")
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
+
+    async def get_properties(self, page: int, limit: int) -> Dict[str, Any]:
+        try:
+            offset = (page - 1) * limit
+            query = text(f"SELECT * FROM {app_config.properties_collection} LIMIT :limit OFFSET :offset")
+            result = await self.session.execute(query, {"limit": limit, "offset": offset})
+            rows = result.fetchall()
+            
+            count_query = text(f"SELECT COUNT(*) FROM {app_config.properties_collection}")
+            count_result = await self.session.execute(count_query)
+            total = count_result.scalar() or 0
+            
+            return {
+                "success": True,
+                "data": [dict(row._mapping) for row in rows],
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def generate_ical_feed(self, prop: Dict[str, Any]) -> str:
+        """Generate iCal feed content for a property."""
+        from icalendar import Calendar, Event
+        
+        cal = Calendar()
+        cal.add('prodid', '-//Email Parser iCal Feed//')
+        cal.add('version', '2.0')
+        cal.add('x-wr-calname', f"Bookings - {prop['name']}")
+        
+        # Fetch bookings for this property
+        # Use property_name or property_id depending on how it's stored in bookings
+        query = text(f"SELECT * FROM {app_config.bookings_collection} WHERE property_id = :pid OR property_name = :pname")
+        result = await self.session.execute(query, {"pid": str(prop["id"]), "pname": prop["name"]})
+        bookings = result.fetchall()
+        
+        for booking in bookings:
+            event = Event()
+            event.add('summary', f"Booking: {booking.guest_name}")
+            event.add('dtstart', booking.check_in_date)
+            event.add('dtend', booking.check_out_date)
+            event.add('uid', booking.reservation_id)
+            event.add('description', f"Platform: {booking.platform}\nGuests: {booking.number_of_guests}")
+            cal.add_component(event)
+            
+        return cal.to_ical().decode('utf-8')
+
+    async def delete_property(self, property_id: int) -> Dict[str, Any]:
         """Delete a property by its ID."""
         try:
-            if not self.supabase_client.initialized:
-                self.supabase_client.initialize()
+            query = text(f"DELETE FROM {app_config.properties_collection} WHERE id = :id RETURNING *")
+            result = await self.session.execute(query, {"id": int(property_id)})
+            row = result.fetchone()
 
-            result = (
-                self.supabase_client.client
-                .table(app_config.properties_collection)
-                .delete()
-                .eq("id", property_id)
-                .execute()
-            )
-
-            if result.data:
+            if row:
                 return {
                     "success": True,
                     "message": f"Property with ID {property_id} deleted successfully",
-                    "deleted_count": len(result.data)
+                    "data": dict(row._mapping)
                 }
             else:
                 return {
@@ -97,166 +137,3 @@ class PropertyService:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
-
-
-    def get_properties(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
-        """Get paginated list of properties."""
-        try:
-            if not self.supabase_client.initialized:
-                self.supabase_client.initialize()
-
-            offset = (page - 1) * limit
-
-            result = (
-                self.supabase_client.client
-                .table(app_config.properties_collection)
-                .select("*")
-                .range(offset, offset + limit - 1)
-                .execute()
-            )
-
-            total_result = (
-                self.supabase_client.client
-                .table(app_config.properties_collection)
-                .select("id")
-                .execute()
-            )
-
-            return {
-                "success": True,
-                "data": {
-                    "data": result.data or [],
-                    "total": len(total_result.data or []),
-                    "page": page,
-                    "limit": limit
-                }
-            }
-
-        except Exception as e:
-            # Note: logger might not be available here, using print for now
-            print(f"Error fetching properties: {str(e)}")
-            return {"success": False, "error": str(e)}  
-
-    def get_property_by_id(self, property_id: str) -> Dict[str, Any] | None:
-        """Fetch property by ID from Supabase"""
-        if not self.supabase_client.initialized:
-            self.supabase_client.initialize()
-        result = (
-            self.supabase_client.client
-            .table(app_config.properties_collection)
-            .select("*")
-            .eq("id", property_id)
-            .execute()
-        )
-        if result.data and len(result.data) > 0:
-            return result.data[0]
-        return None
-
-    def get_bookings_by_property(self, property_id: str) -> list:
-        """
-        Fetch all bookings for a specific property.
-        
-        Args:
-            property_id: Property ID to search for
-            
-        Returns:
-            List of booking dictionaries
-        """
-        try:
-            if not self.supabase_client.initialized:
-                if not self.supabase_client.initialize():
-                    return []
-            
-            # Try to fetch bookings by property name (common pattern in the codebase)
-            result = (
-                self.supabase_client.client
-                .table(app_config.bookings_collection)
-                .select("*")
-                .eq("property_name", property_id)
-                .order("check_in_date", desc=True)
-                .execute()
-            )
-            
-            bookings = result.data if result.data else []
-            
-            # If no bookings found by property_name, try by property_id
-            if not bookings:
-                result = (
-                    self.supabase_client.client
-                    .table(app_config.bookings_collection)
-                    .select("*")
-                    .eq("property_id", property_id)
-                    .order("check_in_date", desc=True)
-                    .execute()
-                )
-                bookings = result.data if result.data else []
-            
-            return bookings
-            
-        except Exception as e:
-            print(f"Error fetching bookings for property {property_id}: {e}")
-            return []
-
-    def generate_ical_feed(self, prop: Dict[str, Any]) -> str:
-        """
-        Generate valid iCal content for the property with actual bookings.
-        
-        Notes:
-        - Lines must not have leading spaces; in iCalendar, a leading space indicates
-          a folded continuation line, which would corrupt properties.
-        - Use CRLF line endings per RFC 5545.
-        """
-        property_id = prop["id"]
-        now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-        # Derive a meaningful UID domain from configured base URL
-        parsed = urlparse(api_config.base_url or "")
-        uid_domain = (parsed.hostname or "example.com").strip()
-        prodid = f"-//{uid_domain}//Booking Calendar//EN"
-
-        # Fetch actual bookings for this property
-        bookings = self.get_bookings_by_property(property_id)
-        
-        lines = [
-            "BEGIN:VCALENDAR",
-            "VERSION:2.0",
-            f"PRODID:{prodid}",
-            "CALSCALE:GREGORIAN",
-            "METHOD:PUBLISH",
-        ]
-
-        # Add booking events
-        for booking in bookings:
-            try:
-                # Parse booking dates
-                check_in = datetime.fromisoformat(booking['check_in_date'].replace('Z', '+00:00'))
-                check_out = datetime.fromisoformat(booking['check_out_date'].replace('Z', '+00:00'))
-                
-                # Format dates for iCal
-                start = check_in.strftime("%Y%m%dT%H%M%SZ")
-                end = check_out.strftime("%Y%m%dT%H%M%SZ")
-                
-                # Create summary with guest name if available
-                guest_name = booking.get('guest_name', 'Guest')
-                reservation_id = booking.get('reservation_id', 'Unknown')
-                summary = f"Booking - {guest_name} ({reservation_id})"
-                
-                lines.extend([
-                    "BEGIN:VEVENT",
-                    f"UID:{reservation_id}@{uid_domain}",
-                    f"DTSTAMP:{now}",
-                    f"SUMMARY:{summary}",
-                    f"DTSTART:{start}",
-                    f"DTEND:{end}",
-                    f"DESCRIPTION:Guest: {guest_name}\\nPlatform: {booking.get('platform', 'Unknown')}\\nReservation ID: {reservation_id}",
-                    "END:VEVENT",
-                ])
-            except Exception as e:
-                # Log error but continue with other bookings
-                print(f"Error processing booking {booking.get('reservation_id', 'unknown')}: {e}")
-                continue
-
-        lines.append("END:VCALENDAR")
-
-        # Join with CRLF and ensure trailing newline
-        return "\r\n".join(lines) + "\r\n"

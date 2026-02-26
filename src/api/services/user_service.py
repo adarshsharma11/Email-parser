@@ -1,18 +1,21 @@
 import os
 import base64
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from cryptography.fernet import Fernet
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from datetime import datetime
 
-from ...supabase_sync.supabase_client import SupabaseClient
 from config.settings import app_config, supabase_config
 
 
 class UserService:
-    def __init__(self):
-        self.supabase = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
         self.fernet = self._build_fernet()
 
     def _build_fernet(self) -> Fernet:
+        # We keep using the same encryption logic for compatibility with existing passwords
         secret = os.getenv("ENCRYPTION_SECRET") or supabase_config.get_auth_key()
         salt = os.getenv("ENCRYPTION_SALT", "email-parser123")
         key = self._derive_key(secret, salt)
@@ -29,177 +32,93 @@ class UserService:
     def decrypt(self, token: str) -> str:
         return self.fernet.decrypt(token.encode()).decode()
 
-    def save_user(self, email: str, password: str, platform: Optional[str] = None) -> Dict[str, Any]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
+    async def save_user(self, email: str, password: str, platform: Optional[str] = None) -> Dict[str, Any]:
         encrypted = self.encrypt(password)
-        payload = {"email": email, "password": encrypted}
+        
+        # Check if user exists
+        check_query = text(f"SELECT email, platform FROM {app_config.users_collection} WHERE email = :email" + 
+                          (" AND platform = :platform" if platform else ""))
+        params = {"email": email}
         if platform:
-            payload["platform"] = platform
+            params["platform"] = platform
+            
+        result = await self.session.execute(check_query, params)
+        existing = result.fetchone()
 
-        q = self.supabase.client.table(app_config.users_collection).select("email,platform").eq("email", email)
-        if platform:
-            q = q.eq("platform", platform)
-        existing = q.limit(1).execute()
-
-        if existing.data:
-            (
-                self.supabase.client
-                .table(app_config.users_collection)
-                .update({"password": encrypted, "platform": platform} if platform else {"password": encrypted})
-                .eq("email", email)
-                .execute()
-            )
+        if existing:
+            # Update existing user
+            update_query = text(f"UPDATE {app_config.users_collection} SET password = :password, updated_at = :updated_at" + 
+                               (", platform = :platform" if platform else "") + 
+                               " WHERE email = :email")
+            update_params = {"password": encrypted, "email": email, "updated_at": datetime.utcnow()}
+            if platform:
+                update_params["platform"] = platform
+            await self.session.execute(update_query, update_params)
             return {"email": email, "password": encrypted}
         else:
-            insert_result = (
-                self.supabase.client
-                .table(app_config.users_collection)
-                .insert(payload)
-                .execute()
-            )
-            data = insert_result.data[0] if insert_result.data else payload
+            # Insert new user
+            columns = ["email", "password"]
+            placeholders = [":email", ":password"]
+            insert_params = {"email": email, "password": encrypted}
+            
+            if platform:
+                columns.append("platform")
+                placeholders.append(":platform")
+                insert_params["platform"] = platform
+                
+            insert_query = text(f"INSERT INTO {app_config.users_collection} ({', '.join(columns)}) VALUES ({', '.join(placeholders)}) RETURNING *")
+            result = await self.session.execute(insert_query, insert_params)
+            row = result.fetchone()
+            data = dict(row._mapping) if row else {"email": email, "password": encrypted}
             return {"email": data.get("email"), "password": data.get("password")}
 
-    def update_password(self, email: str, password: str, platform: Optional[str] = None) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
+    async def update_password(self, email: str, password: str, platform: Optional[str] = None) -> bool:
         encrypted = self.encrypt(password)
-        q = self.supabase.client.table(app_config.users_collection).update({"password": encrypted}).eq("email", email)
+        query_str = f"UPDATE {app_config.users_collection} SET password = :password, updated_at = :updated_at WHERE email = :email"
+        params = {"password": encrypted, "email": email, "updated_at": datetime.utcnow()}
         if platform:
-            q = q.eq("platform", platform)
-        q.execute()
+            query_str += " AND platform = :platform"
+            params["platform"] = platform
+            
+        await self.session.execute(text(query_str), params)
         return True
 
-    def update_status(self, email: str, status: str) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .update({"status": status})
-            .eq("email", email)
-            .execute()
-        )
+    async def update_status(self, email: str, status: str) -> bool:
+        query = text(f"UPDATE {app_config.users_collection} SET status = :status, updated_at = :updated_at WHERE email = :email")
+        await self.session.execute(query, {"status": status, "email": email, "updated_at": datetime.utcnow()})
         return True
 
-    def get_user(self, email: str, platform: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        q = self.supabase.client.table(app_config.users_collection).select("email,password,platform").eq("email", email)
+    async def get_user(self, email: str, platform: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        query_str = f"SELECT email, password, platform FROM {app_config.users_collection} WHERE email = :email"
+        params = {"email": email}
         if platform:
-            q = q.eq("platform", platform)
-        result = q.limit(1).execute()
-        if result.data:
-            return result.data[0]
+            query_str += " AND platform = :platform"
+            params["platform"] = platform
+            
+        result = await self.session.execute(text(query_str), params)
+        row = result.fetchone()
+        if row:
+            return dict(row._mapping)
         return None
 
-    def list_users(self, limit: int = 50, offset: int = 0) -> list[Dict[str, Any]]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
+    async def list_active_users(self) -> List[Dict[str, Any]]:
+        query = text(f"SELECT email, password, platform FROM {app_config.users_collection} WHERE status = 'active'")
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
 
-        result = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email,status,platform")
-            .range(offset, offset + max(0, limit) - 1)
-            .execute()
-        )
-        return result.data or []
+    async def list_users(self) -> List[Dict[str, Any]]:
+        query = text(f"SELECT email, password, status, platform, created_at FROM {app_config.users_collection}")
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
 
-    def delete_user(self, email: str, platform: Optional[str] = None) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        q = self.supabase.client.table(app_config.users_collection).delete().eq("email", email)
+    async def delete_user(self, email: str, platform: Optional[str] = None) -> bool:
+        query_str = f"DELETE FROM {app_config.users_collection} WHERE email = :email"
+        params = {"email": email}
         if platform:
-            q = q.eq("platform", platform)
-        q.execute()
+            query_str += " AND platform = :platform"
+            params["platform"] = platform
+            
+        await self.session.execute(text(query_str), params)
         return True
-
-    def update_user(self, email: str, new_email: Optional[str] = None, password: Optional[str] = None, platform: Optional[str] = None) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-        update_payload: Dict[str, Any] = {}
-        if new_email:
-            update_payload["email"] = new_email
-        if password is not None:
-            update_payload["password"] = self.encrypt(password)
-        if platform is not None:
-            update_payload["platform"] = platform
-        if not update_payload:
-            return True
-        q = self.supabase.client.table(app_config.users_collection).update(update_payload).eq("email", email)
-        if platform:
-            q = q.eq("platform", platform)
-        q.execute()
-        return True
-
-    def update_by_platform(self, platform: str, email: str, password: str) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-        encrypted = self.encrypt(password)
-        (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .update({"email": email, "password": encrypted})
-            .eq("platform", platform)
-            .execute()
-        )
-        return True
-
-    def list_active_users(self, limit: int = 100, offset: int = 0) -> list[Dict[str, Any]]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        result = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email,password,status")
-            .eq("status", "active")
-            .range(offset, offset + max(0, limit) - 1)
-            .execute()
-        )
-        return result.data or []
-
-    def list_all_credentials(self, limit: int = 1000, offset: int = 0) -> list[Dict[str, Any]]:
-        """List all credential records with email and encrypted password, regardless of status."""
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-        result = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email,password,status,platform")
-            .range(offset, offset + max(0, limit) - 1)
-            .execute()
-        )
-        return result.data or []
-
-    def get_first_user(self) -> Optional[Dict[str, Any]]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-        result = (
-            self.supabase.client
-            .table(app_config.users_collection)
-            .select("email,password")
-            .limit(1)
-            .execute()
-        )
-        if result.data:
-            return result.data[0]
-        return None

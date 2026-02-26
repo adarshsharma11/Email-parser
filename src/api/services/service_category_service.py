@@ -1,77 +1,56 @@
 from typing import List, Dict, Any, Optional
-from ...supabase_sync.supabase_client import SupabaseClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from datetime import datetime
 
 class ServiceCategoryService:
-    def __init__(self):
-        self.supabase = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
         self.table_name = "service_category"
 
-    def _ensure_initialized(self):
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-    def create_category(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        self._ensure_initialized()
+    async def create_category(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join([f":{k}" for k in data.keys()])
+        query = text(f"INSERT INTO {self.table_name} ({columns}) VALUES ({placeholders}) RETURNING *")
         
-        result = (
-            self.supabase.client
-            .table(self.table_name)
-            .insert(data)
-            .execute()
-        )
+        result = await self.session.execute(query, data)
+        row = result.fetchone()
         
-        if result.data:
-            return result.data[0]
+        if row:
+            return dict(row._mapping)
         raise RuntimeError("Failed to create service category")
 
-    def get_category(self, category_id: str) -> Optional[Dict[str, Any]]:
-        self._ensure_initialized()
-        
-        result = (
-            self.supabase.client
-            .table(self.table_name)
-            .select("*")
-            .eq("id", category_id)
-            .execute()
-        )
-        
-        if result.data:
-            return result.data[0]
+    async def get_category(self, category_id: int) -> Optional[Dict[str, Any]]:
+        query = text(f"SELECT * FROM {self.table_name} WHERE id = :id")
+        result = await self.session.execute(query, {"id": int(category_id)})
+        row = result.fetchone()
+        if row:
+            return dict(row._mapping)
         return None
 
-    def list_categories(self) -> List[Dict[str, Any]]:
-        self._ensure_initialized()
-        
-        result = (
-            self.supabase.client
-            .table(self.table_name)
-            .select("*")
-            .execute()
-        )
-        
-        return result.data or []
+    async def list_categories(self) -> List[Dict[str, Any]]:
+        query = text(f"SELECT * FROM {self.table_name}")
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
 
-    def update_category(self, category_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        self._ensure_initialized()
-        
-        # Remove None values
+    async def update_category(self, category_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         clean_data = {k: v for k, v in data.items() if v is not None}
-        
         if not clean_data:
-            return self.get_category(category_id)
+            return await self.get_category(category_id)
 
-        result = (
-            self.supabase.client
-            .table(self.table_name)
-            .update(clean_data)
-            .eq("id", category_id)
-            .execute()
-        )
+        clean_data["updated_at"] = datetime.utcnow()
+        clean_data["id"] = int(category_id)
         
-        if result.data:
-            return result.data[0]
+        set_clause = ", ".join([f"{k} = :{k}" for k in clean_data.keys() if k != "id"])
+        query = text(f"UPDATE {self.table_name} SET {set_clause} WHERE id = :id RETURNING *")
+        
+        result = await self.session.execute(query, clean_data)
+        row = result.fetchone()
+        
+        if row:
+            return dict(row._mapping)
         raise RuntimeError("Failed to update service category")
 
-    def update_status(self, category_id: str, status: bool) -> Dict[str, Any]:
-        return self.update_category(category_id, {"status": status})
+    async def update_status(self, category_id: int, status: bool) -> Dict[str, Any]:
+        return await self.update_category(int(category_id), {"status": status})

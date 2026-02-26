@@ -30,7 +30,7 @@ class RulesListResponse(BaseModel):
 async def get_rules(
     service: AutomationService = Depends(get_automation_service)
 ):
-    rules = service.get_all_rules()
+    rules = await service.get_all_rules()
     return {
         "rules": [
             {"name": name, "enabled": enabled}
@@ -47,7 +47,7 @@ async def get_rules(
 async def get_automation_logs(
     service: AutomationService = Depends(get_automation_service)
 ):
-    logs = service.get_logs()
+    logs = await service.get_logs()
     return {
         "success": True,
         "message": "Automation logs retrieved successfully",
@@ -66,12 +66,12 @@ async def toggle_rule(
     service: AutomationService = Depends(get_automation_service)
 ):
     # Verify rule exists in current rules (optional, but good practice)
-    current_rules = service.get_all_rules()
+    current_rules = await service.get_all_rules()
     # Note: AutomationService currently allows adding new rules dynamically via toggle,
     # but we might want to restrict to known rules if strict validation is needed.
     # For now, we'll allow it as the service handles persistence.
     
-    updated_rules = service.toggle_rule(rule_name, request.enabled)
+    updated_rules = await service.toggle_rule(rule_name, request.enabled)
     
     return {
         "name": rule_name,

@@ -39,7 +39,7 @@ async def get_crews(
         HTTPException: If service returns an error
     """
     try:
-        crews = crew_service.get_active_crews(property_id)
+        crews = await crew_service.get_active_crews(property_id)
         
         return {
             "success": True,
@@ -86,7 +86,7 @@ async def create_crew(
         HTTPException: If service returns an error
     """
     try:
-        crew = crew_service.add_crew(crew_data.model_dump())
+        crew = await crew_service.create_crew(crew_data.model_dump())
         
         return {
             "success": True,
@@ -117,7 +117,7 @@ async def create_crew(
 )
 async def update_crew(
     crew_data: UpdateCrewRequest,
-    crew_id: str = Path(..., description="ID of the crew member to update"),
+    crew_id: int = Path(..., description="ID of the crew member to update"),
     crew_service: CrewService = Depends(get_crew_service)
 ):
     """
@@ -135,7 +135,7 @@ async def update_crew(
         HTTPException: If service returns an error
     """
     try:
-        crew = crew_service.update_crew(crew_id, crew_data.model_dump(exclude_unset=True))
+        crew = await crew_service.update_crew(crew_id, crew_data.model_dump(exclude_unset=True))
         
         return {
             "success": True,
@@ -165,7 +165,7 @@ async def update_crew(
     }
 )
 async def delete_crew(
-    crew_id: str = Path(..., description="ID of the crew member to delete"),
+    crew_id: int = Path(..., description="ID of the crew member to delete"),
     crew_service: CrewService = Depends(get_crew_service)
 ):
     """
@@ -182,7 +182,7 @@ async def delete_crew(
         HTTPException: If service returns an error
     """
     try:
-        success = crew_service.delete_crew(crew_id)
+        success = await crew_service.delete_crew(crew_id)
         
         return {
             "success": True,

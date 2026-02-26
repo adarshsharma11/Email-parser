@@ -3,6 +3,7 @@ Gmail IMAP client for reading vacation rental booking emails.
 """
 import imaplib
 import email
+import re
 from email.header import decode_header
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
@@ -232,33 +233,12 @@ class GmailClient:
                 raw_email = msg_data[0][1]
             email_message = email.message_from_bytes(raw_email)
 
-            subject = self._decode_header(email_message["subject"])
-            sender = self._decode_header(email_message["from"])
-            date_str = email_message["date"]
-
-            try:
-                date = email.utils.parsedate_to_datetime(date_str)
-            except Exception:
-                date = datetime.now()
-
-            body_text, body_html = self._extract_body(email_message)
-            platform = self._detect_platform(sender, subject)
-
-            email_data = EmailData(
-                email_id=email_id,
-                subject=subject,
-                sender=sender,
-                date=date,
-                body_text=body_text,
-                body_html=body_html,
-                platform=platform,
-                folder=mailbox,
-            )
+            email_data = self._parse_message(email_id, email_message, mailbox)
 
             self.logger.debug(
                 "Email fetched successfully",
                 email_id=email_id,
-                platform=platform.value if platform else None,
+                platform=email_data.platform.value if email_data.platform else None,
             )
             return email_data
 
@@ -298,10 +278,47 @@ class GmailClient:
                 text_query,
                 match_any_booking=(only_booking and platform is None)
             )
-            for eid in email_ids:
-                email_data = self.fetch_email(eid, mailbox=box)
-                if email_data:
-                    all_emails.append(email_data)
+            
+            if not email_ids:
+                continue
+                
+            # Bulk fetch emails in this mailbox to improve performance
+            # IMAP allows fetching multiple IDs at once: FETCH 1,2,3 (RFC822)
+            id_sequence = ",".join(email_ids)
+            try:
+                # We already selected the mailbox in search_emails, so no need to select again
+                status, msg_data = self.connection.fetch(id_sequence, "(RFC822)")
+                if status != "OK":
+                    self.logger.error("Bulk fetch failed", status=status, mailbox=box)
+                    # Fallback to sequential if bulk fails
+                    for eid in email_ids:
+                        email_data = self.fetch_email(eid, mailbox=box)
+                        if email_data:
+                            all_emails.append(email_data)
+                    continue
+
+                # Parse bulk response
+                # msg_data is a list like [ (b'1 (RFC822 {1234}', b'raw...'), b')', (b'2 ...', b'raw...'), ... ]
+                for i in range(0, len(msg_data), 2):
+                    if isinstance(msg_data[i], tuple):
+                        # Extract ID from the first part of the tuple (e.g., b'1 (RFC822 {1234}')
+                        fetch_id_match = re.search(r'^(\d+)', msg_data[i][0].decode())
+                        fetch_id = fetch_id_match.group(1) if fetch_id_match else "unknown"
+                        
+                        raw_email = msg_data[i][1]
+                        email_message = email.message_from_bytes(raw_email)
+                        
+                        # Use the helper to parse the message
+                        email_data = self._parse_message(fetch_id, email_message, box)
+                        if email_data:
+                            all_emails.append(email_data)
+            except Exception as e:
+                self.logger.error("Error in bulk fetch", error=str(e), mailbox=box)
+                # Fallback
+                for eid in email_ids:
+                    email_data = self.fetch_email(eid, mailbox=box)
+                    if email_data:
+                        all_emails.append(email_data)
         
         emails = all_emails
         
@@ -317,6 +334,31 @@ class GmailClient:
             
         self.logger.info("Fetched emails", count=len(emails))
         return emails
+
+    def _parse_message(self, email_id: str, email_message: email.message.Message, mailbox: str) -> EmailData:
+        """Helper to parse an email message into EmailData."""
+        subject = self._decode_header(email_message["subject"])
+        sender = self._decode_header(email_message["from"])
+        date_str = email_message["date"]
+
+        try:
+            date = email.utils.parsedate_to_datetime(date_str)
+        except Exception:
+            date = datetime.now()
+
+        body_text, body_html = self._extract_body(email_message)
+        platform = self._detect_platform(sender, subject)
+
+        return EmailData(
+            email_id=email_id,
+            subject=subject,
+            sender=sender,
+            date=date,
+            body_text=body_text,
+            body_html=body_html,
+            platform=platform,
+            folder=mailbox,
+        )
 
     def mark_as_read(self, email_id: str) -> bool:
         """Mark an email as read."""

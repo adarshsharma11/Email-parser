@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field, ConfigDict
 from ..services.category_service import CategoryService
+from ..dependencies import get_category_service
 
 router = APIRouter(prefix="/categories", tags=["categories"])
-service = CategoryService()
 
 
 class CategoryCreateRequest(BaseModel):
@@ -27,9 +27,9 @@ class CategoryResponse(BaseModel):
         500: {"description": "Server Error"},
     },
 )
-async def create_category(req: CategoryCreateRequest):
+async def create_category(req: CategoryCreateRequest, service: CategoryService = Depends(get_category_service)):
     try:
-        created = service.create_category(req.name, req.parent_id)
+        created = await service.create_category(req.name, req.parent_id)
         return {
             "success": True,
             "message": "Category created",
@@ -53,9 +53,9 @@ async def create_category(req: CategoryCreateRequest):
 
 
 @router.get("/tree", response_model=CategoryResponse)
-async def get_category_tree():
+async def get_category_tree(service: CategoryService = Depends(get_category_service)):
     try:
-        tree = service.get_category_tree()
+        tree = await service.get_category_tree()
         return {
             "success": True,
             "message": "Category Tree",
@@ -72,9 +72,9 @@ async def get_category_tree():
 
 
 @router.get("/{category_id}", response_model=CategoryResponse)
-async def get_category(category_id: str):
+async def get_category(category_id: int, service: CategoryService = Depends(get_category_service)):
     try:
-        item = service.get_category(category_id)
+        item = await service.get_category(category_id)
         if not item:
             raise HTTPException(
                 status_code=404,
@@ -98,18 +98,13 @@ async def get_category(category_id: str):
 
 
 @router.get("", response_model=CategoryResponse)
-async def list_categories(
-    parent_id: int | None = Query(
-        None,
-        description="Filter by parent_id; omit for roots",
-    )
-):
+async def list_children(parent_id: int | None = Query(None), service: CategoryService = Depends(get_category_service)):
     try:
-        items = service.list_children(parent_id)
+        items = await service.list_children(parent_id)
         return {
             "success": True,
             "message": "Categories",
-            "data": {"items": items},
+            "data": {"categories": items},
         }
     except Exception as e:
         raise HTTPException(

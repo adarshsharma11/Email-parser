@@ -37,7 +37,7 @@ class BookingData:
     """Booking information extracted from emails."""
     reservation_id: str
     platform: Platform
-    guest_name: str
+    guest_name: str = "Unknown Guest"
     guest_phone: Optional[str] = None
     guest_email: Optional[str] = None
     check_in_date: Optional[datetime] = None

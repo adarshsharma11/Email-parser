@@ -32,7 +32,7 @@ async def create_activity_rule(
     service: ActivityRuleService = Depends(get_activity_rule_service)
 ):
     """Create a new activity rule."""
-    result = service.create_rule(request)
+    result = await service.create_rule(request)
     return {
         "success": True,
         "message": "Activity rule created successfully",
@@ -52,7 +52,7 @@ async def list_activity_rules(
     service: ActivityRuleService = Depends(get_activity_rule_service)
 ):
     """Get all activity rules."""
-    result = service.get_rules()
+    result = await service.get_rules()
     return {
         "success": True,
         "message": "Activity rules retrieved successfully",
@@ -74,7 +74,7 @@ async def get_activity_rule(
     service: ActivityRuleService = Depends(get_activity_rule_service)
 ):
     """Get an activity rule by ID."""
-    result = service.get_rule(rule_id)
+    result = await service.get_rule(rule_id)
     return {
         "success": True,
         "message": "Activity rule retrieved successfully",
@@ -97,10 +97,33 @@ async def update_activity_rule(
     service: ActivityRuleService = Depends(get_activity_rule_service)
 ):
     """Update an activity rule."""
-    result = service.update_rule(rule_id, request)
+    result = await service.update_rule(rule_id, request)
     return {
         "success": True,
         "message": "Activity rule updated successfully",
+        "data": result
+    }
+
+@router.post(
+    "/{rule_id}/toggle",
+    response_model=ActivityRuleDetailResponse,
+    summary="Toggle activity rule status",
+    responses={
+        200: {"description": "Activity rule status toggled successfully"},
+        404: {"description": "Activity rule not found", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse}
+    }
+)
+async def toggle_activity_rule(
+    rule_id: int,
+    status: bool,
+    service: ActivityRuleService = Depends(get_activity_rule_service)
+):
+    """Toggle an activity rule status."""
+    result = await service.toggle_status(rule_id, status)
+    return {
+        "success": True,
+        "message": f"Activity rule status set to {'enabled' if status else 'disabled'}",
         "data": result
     }
 

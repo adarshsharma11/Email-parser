@@ -1,21 +1,25 @@
 """
 Main orchestrator for the Vacation Rental Booking Automation system.
 """
+import sys
 import click
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .email_reader.gmail_client import GmailClient
 from .booking_parser.parser import BookingParser
 from .guest_communications.notifier import Notifier
 from .calendar_integration.google_calendar_client import GoogleCalendarClient
-# Use Supabase client under the FirestoreClient alias to keep interface stable
-from .supabase_sync.supabase_client import SupabaseClient as FirestoreClient
+# UseSupabaseClient alias removed, we use AsyncSession from project
 from .utils.models import EmailData, BookingData, Platform, ProcessingResult, SyncResult
 from .utils.logger import setup_logger, BookingLogger
 from config.settings import app_config
 from .api.services.user_service import UserService
+from .api.services.booking_service import BookingService
+from .api.services.property_service import PropertyService
 from .api.app import create_app
+from .db.psql_client import psql_client
+import asyncio
 
 # Create FastAPI app instance for uvicorn
 app = create_app()
@@ -26,13 +30,13 @@ dummy_booking = BookingData(
     guest_name="Alice",
     guest_phone="+18777804236",
     guest_email="adarshsharma002@gmail.com",
-    check_in_date="2025-09-23",
-    check_out_date="2025-09-25",
+    check_in_date=datetime(2025, 9, 23),
+    check_out_date=datetime(2025, 9, 25),
     property_name="Sea View Villa"
 )
 
 class BookingAutomation:
-    """Main orchestrator for vacation rental booking automation."""
+    """Main orchestrator for vacation rental booking automation using PostgreSQL."""
     
     def __init__(self, log_level: str = "INFO", log_file: Optional[str] = None):
         self.logger = setup_logger("booking_automation", log_level, log_file)
@@ -41,365 +45,195 @@ class BookingAutomation:
         # Initialize components
         self.gmail_client = GmailClient()
         self.booking_parser = BookingParser()
-        self.firestore_client = FirestoreClient()
         self.notifier = Notifier()
         self.calendar_client = GoogleCalendarClient()
-        self.user_service = UserService()
     
-    def process_emails(
+    async def process_emails(
         self,
         platform: Optional[Platform] = None,
-        since_days: Optional[int] = None,
+        since_days: Optional[int] = 1,
         limit: Optional[int] = None,
         dry_run: bool = False
     ) -> dict:
         """
         Main method to process emails and sync bookings.
-        
-        Args:
-            platform: Specific platform to process
-            since_days: Number of days to look back
-            limit: Maximum number of emails to process
-            dry_run: If True, don't actually write to the database
-            
-        Returns:
-            Dictionary with processing results
         """
         try:
+            # Enforce 24 hours (1 day) if not specified
+            since_days_effective = since_days if since_days is not None else 1
+            
             self.logger.info("Starting email processing",
                            platform=platform.value if platform else "all",
-                           since_days=since_days,
+                           since_days=since_days_effective,
                            limit=limit,
                            dry_run=dry_run)
             
-            # Use only active credentials from DB
-            active_users = self.user_service.list_active_users()
-            
-            # Fallback to .env credentials if no DB users found
-            if not active_users:
-                from config.settings import gmail_config
-                if gmail_config.email and gmail_config.password:
-                    self.logger.info("No active users in DB, using .env credentials")
-                    try:
-                        # Encrypt password to match expected format
-                        enc_pwd = self.user_service.encrypt(gmail_config.password)
-                        active_users = [{
-                            "email": gmail_config.email, 
-                            "password": enc_pwd
-                        }]
-                    except Exception as e:
-                        self.logger.warning("Failed to encrypt .env password", error=str(e))
-            
-            if not active_users:
-                return self._get_empty_results()
-
-            emails: List[EmailData] = []
-            for u in active_users:
-                email_addr = u.get("email")
-                enc = u.get("password")
-                if not email_addr or not enc:
-                    continue
-                try:
-                    pwd = self.user_service.decrypt(enc)
-                except Exception:
-                    try:
-                        self.user_service.update_status(email_addr, "inactive")
-                    except Exception:
-                        pass
-                    continue
-                client = GmailClient()
-                if not client.connect_with_credentials(email_addr, pwd):
-                    try:
-                        self.user_service.update_status(email_addr, "inactive")
-                    except Exception:
-                        pass
-                    continue
-                # Enforce last 24 hours window if not provided
-                # User requested to fetch all bookings similar to API behavior, so we remove the default 1 day limit
-                since_days_effective = since_days
-                fetched = client.fetch_emails(platform, since_days_effective, limit, mailbox="INBOX")
-                emails.extend(fetched or [])
-                for ed in fetched or []:
-                    if not dry_run:
-                        client.mark_as_read(ed.email_id)
-                client.disconnect()
-            
-            if not emails:
-                self.logger.info("No emails found matching criteria")
-                return self._get_empty_results()
-            
-            self.logger.info(f"Found {len(emails)} emails to process")
-            
-            # Process each email
-            successful_bookings = []
-            failed_emails = []
-            parsed_details = []
-            
-            for email_data in emails:
-                try:
-                    # Log email processing
-                    platform_name = email_data.platform.value if email_data.platform else "unknown"
-                    self.booking_logger.log_email_processed(platform_name, email_data.email_id)
-                    
-                    # Parse email
-                    print(email_data)
-
-                    parse_result = self.booking_parser.parse_email(email_data)
-                    
-                    if parse_result.success and parse_result.booking_data:
-                        bd = parse_result.booking_data
-                        self.booking_logger.log_booking_parsed(bd.to_dict())
-                        # Filter: only real bookings (skip inquiries/non-bookings)
-                        booking_type = (bd.raw_data or {}).get("booking_type")
-                        if booking_type in ("inquiry", "other"):
-                            failed_emails.append({
-                                'email_id': email_data.email_id,
-                                'error': "Skipped non-booking email",
-                                'platform': platform_name
-                            })
-                            continue
-                        # If cancellation detected, update status and skip insertion
-                        status = (bd.raw_data or {}).get("status")
-                        if status == "cancelled":
-                            try:
-                                self.firestore_client.update_booking(bd.reservation_id, {"status": "cancelled"})
-                            except Exception:
-                                pass
-                            failed_emails.append({
-                                'email_id': email_data.email_id,
-                                'error': "Cancellation detected, status updated",
-                                'platform': platform_name
-                            })
-                            continue
-                        # Validate required fields: must have property_id and both dates
-                        is_valid = bool(bd.property_id) and bool(bd.check_in_date) and bool(bd.check_out_date)
-                        if not is_valid:
-                            failed_emails.append({
-                                'email_id': email_data.email_id,
-                                'error': "Missing required fields (dates/property_id), skipped",
-                                'platform': platform_name
-                            })
-                            continue
-                        successful_bookings.append(bd)
-                        parsed_details.append({
-                            'email_id': bd.email_id,
-                            'platform': bd.platform.value if bd.platform else None,
-                            'reservation_id': bd.reservation_id,
-                            'guest_name': bd.guest_name,
-                            'guest_email': bd.guest_email,
-                            'property_name': bd.property_name,
-                            'property_id': bd.property_id,
-                        })
-                    else:
-                        failed_emails.append({
-                            'email_id': email_data.email_id,
-                            'error': parse_result.error_message,
-                            'platform': platform_name
-                        })
-                        self.booking_logger.log_error(
-                            Exception(parse_result.error_message),
-                            f"Email parsing failed: {email_data.email_id}"
-                        )
+            async with psql_client.async_session_factory() as session:
+                user_service = UserService(session)
+                booking_service = BookingService(session, self.logger)
+                property_service = PropertyService(session)
                 
-                except Exception as e:
-                    failed_emails.append({
-                        'email_id': email_data.email_id,
-                        'error': str(e),
-                        'platform': email_data.platform.value if email_data.platform else "unknown"
-                    })
-                    self.booking_logger.log_error(e, f"Email processing failed: {email_data.email_id}")
-            
-            # Sync bookings to database (deduplicate by reservation_id)
-            sync_results = []
-            if successful_bookings and not dry_run:
-                unique_by_email = {}
-                for b in successful_bookings:
-                    eid = getattr(b, "email_id", None)
-                    if eid and eid not in unique_by_email:
-                        unique_by_email[eid] = b
-                unique_bookings = list(unique_by_email.values())
-                sync_results = self.firestore_client.sync_bookings(unique_bookings, dry_run)
+                # Use only active credentials from DB
+                active_users = await user_service.list_active_users()
                 
-                for i, sync_result in enumerate(sync_results):
-                    event_id = None
-                    block_event = None
-                    if sync_result.success:
-                        if sync_result.is_new:
-                            self.booking_logger.log_new_booking(successful_bookings[i].to_dict())
-                            # Send welcome notification
-                            notify_success = self.notifier.send_welcome(successful_bookings[i])
-                            if not notify_success:
-                                self.logger.warning(
-                                    "Failed to send welcome notification",
-                                    reservation_id=sync_result.reservation_id
-                                )
-                                self.booking_logger.log_error(
-                                    Exception("Failed to send welcome notification"),
-                                    f"Notification failed for booking {sync_result.reservation_id}"
-                                )
-                            try:
-                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
-                                from src.utils.crew import pick_crew_round_robin
-                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
-                                crew_id = crew.get("id") if crew else None
-                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
-                                task = self.firestore_client.create_cleaning_task(
-                                    booking_id=successful_bookings[i].reservation_id,
-                                    property_id=task_property,
-                                    scheduled_date=scheduled_date,
-                                    crew_id=crew_id
-                                )
-                                notify_success = self.notifier.notify_cleaning_task(crew, task)
-                                if not notify_success:
-                                    self.booking_logger.log_error(
-                                        Exception("Failed to send cleaning notification"),
-                                        f"Notification failed for task {task['id'] if task else 'unknown'}"
-                                    )
-                                if crew and task and successful_bookings[i].property_id:
-                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
-                                    if event_id:
-                                        self.logger.info(
-                                            "Cleaning event scheduled",
-                                            event_id=event_id,
-                                            task_id=task["id"],
-                                            property=successful_bookings[i].property_name
-                                        )
-                            except Exception as e:
-                                self.booking_logger.log_error(e, f"Failed to assign cleaning for booking {successful_bookings[i].reservation_id}")
-                        else:
-                            event_id = self.calendar_client.add_booking_event(dummy_booking)
-                        updates = {}
-                        # Skip guest updates
-                        if successful_bookings[i].property_id:
-                            updates["property_id"] = successful_bookings[i].property_id
-                        if successful_bookings[i].property_name:
-                            updates["property_name"] = successful_bookings[i].property_name
-                        if updates:
-                            try:
-                                self.firestore_client.update_booking(successful_bookings[i].reservation_id, updates)
-                            except Exception:
-                                pass
-                        if event_id:
-                            self.logger.info(
-                                "Google Calendar booking event created",
-                                event_id=event_id,
-                                reservation_id=dummy_booking.reservation_id
-                            )
-
-                        existing_tasks = self.firestore_client.get_cleaning_tasks_by_reservation_id(successful_bookings[i].reservation_id)
-                        if not existing_tasks:
-                            try:
-                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
-                                if scheduled_date is None:
-                                    scheduled_date = datetime.utcnow().date()
-                                from src.utils.crew import pick_crew_round_robin
-                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
-                                crew_id = crew.get("id") if crew else None
-                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
-                                task = self.firestore_client.create_cleaning_task(
-                                    booking_id=successful_bookings[i].reservation_id,
-                                    property_id=task_property,
-                                    scheduled_date=scheduled_date,
-                                    crew_id=crew_id
-                                )
-                                if crew and task:
-                                    notify_success = self.notifier.notify_cleaning_task(crew, task)
-                                    if not notify_success:
-                                        self.booking_logger.log_error(
-                                            Exception("Failed to send cleaning notification"),
-                                            f"Notification failed for task {task['id'] if task else 'unknown'}"
-                                        )
-                                if crew and task and successful_bookings[i].property_id:
-                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
-                                    if event_id:
-                                        self.logger.info(
-                                            "Cleaning event scheduled",
-                                            event_id=event_id,
-                                            task_id=task["id"],
-                                            property=successful_bookings[i].property_name
-                                        )
-                            except Exception as e:
-                                self.booking_logger.log_error(e, f"Failed to assign cleaning for booking {successful_bookings[i].reservation_id}")
-
-                        block_event = None
-                        # Block the dates on the calendar
-                        block_event = self.calendar_client.block_dates(
-                            property_id=dummy_booking.property_name,
-                            check_in=dummy_booking.check_in_date,
-                            check_out=dummy_booking.check_out_date
-                        )
-                        if block_event:
-                            self.logger.info(
-                                "Property dates blocked on Google Calendar",
-                                property=successful_bookings[i].property_name,
-                                check_in=dummy_booking.check_in_date,
-                                check_out=dummy_booking.check_out_date,
-                            )
-                    else:
-                        self.booking_logger.log_error(
-                            Exception(sync_result.error_message),
-                            f"Database sync failed: {sync_result.reservation_id}"
-                        )
-
-                    if block_event:
+                # Fallback to .env credentials if no DB users found
+                if not active_users:
+                    from config.settings import gmail_config
+                    if gmail_config.email and gmail_config.password:
+                        self.logger.info("No active users in DB, using .env credentials")
                         try:
-                            existing_tasks_block = self.firestore_client.get_cleaning_tasks_by_reservation_id(successful_bookings[i].reservation_id)
-                            if not existing_tasks_block:
-                                scheduled_date = successful_bookings[i].check_out_date or successful_bookings[i].check_in_date
-                                if scheduled_date is None:
-                                    scheduled_date = datetime.utcnow().date()
-                                from src.utils.crew import pick_crew_round_robin
-                                crew = pick_crew_round_robin(self.firestore_client, successful_bookings[i].property_id or successful_bookings[i].property_name)
-                                crew_id = crew.get("id") if crew else None
-                                task_property = successful_bookings[i].property_id or successful_bookings[i].property_name or "Unknown Property"
-                                task = self.firestore_client.create_cleaning_task(
-                                    booking_id=successful_bookings[i].reservation_id,
-                                    property_id=task_property,
-                                    scheduled_date=scheduled_date,
-                                    crew_id=crew_id
-                                )
-                                if crew and task:
-                                    notify_success = self.notifier.notify_cleaning_task(crew, task)
-                                    if not notify_success:
-                                        self.booking_logger.log_error(
-                                            Exception("Failed to send cleaning notification"),
-                                            f"Notification failed for task {task['id'] if task else 'unknown'}"
-                                        )
-                                if crew and task and successful_bookings[i].property_id:
-                                    event_id = self.calendar_client.add_cleaning_event(crew, task)
-                                    if event_id:
-                                        self.logger.info(
-                                            "Cleaning event scheduled",
-                                            event_id=event_id,
-                                            task_id=task["id"],
-                                            property=successful_bookings[i].property_name
-                                        )
+                            # Encrypt password to match expected format
+                            enc_pwd = user_service.encrypt(gmail_config.password)
+                            active_users = [{
+                                "email": gmail_config.email, 
+                                "password": enc_pwd
+                            }]
                         except Exception as e:
-                            self.booking_logger.log_error(e, f"Failed to schedule cleaning for booking {successful_bookings[i].reservation_id}")    
-            
-            # Mark emails as read (only if not dry run)
-            if not dry_run:
+                            self.logger.warning("Failed to encrypt .env password", error=str(e))
+                
+                if not active_users:
+                    return self._get_empty_results()
+
+                emails: List[EmailData] = []
+                for u in active_users:
+                    email_addr = u.get("email")
+                    enc = u.get("password")
+                    if not email_addr or not enc:
+                        continue
+                    try:
+                        pwd = user_service.decrypt(enc)
+                    except Exception:
+                        try:
+                            await user_service.update_status(email_addr, "inactive")
+                        except Exception:
+                            pass
+                        continue
+                    client = GmailClient()
+                    if not client.connect_with_credentials(email_addr, pwd):
+                        try:
+                            await user_service.update_status(email_addr, "inactive")
+                        except Exception:
+                            pass
+                        continue
+                    
+                    fetched = client.fetch_emails(platform, since_days_effective, limit, mailbox="INBOX")
+                    emails.extend(fetched or [])
+                    client.disconnect()
+                
+                if not emails:
+                    self.logger.info("No emails found matching criteria")
+                    return self._get_empty_results()
+                
+                self.logger.info(f"Found {len(emails)} emails to process")
+                
+                successful_bookings = []
+                failed_emails = []
+                parsed_details = []
+                
                 for email_data in emails:
-                    self.gmail_client.mark_as_read(email_data.email_id)
-            
-            
-            # Print summary
-            self.booking_logger.print_summary()
-            
-            return {
-                'emails_processed': len(emails),
-                'bookings_parsed': len(successful_bookings),
-                'new_bookings': len([r for r in sync_results if r.success and r.is_new]),
-                'duplicate_bookings': len([r for r in sync_results if r.success and not r.is_new]),
-                'failed_emails': failed_emails,
-                'sync_errors': [r for r in sync_results if not r.success],
-                'dry_run': dry_run,
-                'parsed_bookings': parsed_details
-            }
-            
+                    try:
+                        platform_name = email_data.platform.value if email_data.platform else "unknown"
+                        self.booking_logger.log_email_processed(platform_name, email_data.email_id)
+                        
+                        parse_result = self.booking_parser.parse_email(email_data)
+                        
+                        if parse_result.success and parse_result.booking_data:
+                            bd = parse_result.booking_data
+                            self.booking_logger.log_booking_parsed(bd.to_dict())
+                            
+                            # Real bookings filter
+                            booking_type = (bd.raw_data or {}).get("booking_type")
+                            if booking_type in ("inquiry", "other"):
+                                failed_emails.append({'email_id': email_data.email_id, 'error': "Skipped inquiry", 'platform': platform_name})
+                                continue
+                                
+                            # Basic validation - require reservation_id and at least one date
+                            if not bd.reservation_id:
+                                failed_emails.append({'email_id': email_data.email_id, 'error': "Missing reservation_id", 'platform': platform_name})
+                                continue
+                            
+                            # Allow if we have at least check-in OR check-out date, or use booking_date as fallback
+                            if not (bd.check_in_date or bd.check_out_date or bd.booking_date):
+                                failed_emails.append({'email_id': email_data.email_id, 'error': "Missing dates (check_in, check_out, or booking_date)", 'platform': platform_name})
+                                continue
+                            
+                            # Fallback: if check_in/check_out missing but booking_date exists, use booking_date
+                            if not bd.check_in_date and bd.booking_date:
+                                bd.check_in_date = bd.booking_date
+                            if not bd.check_out_date and bd.booking_date:
+                                # Set checkout to day after booking date as fallback
+                                bd.check_out_date = bd.booking_date + timedelta(days=1)
+                                
+                            successful_bookings.append(bd)
+                            parsed_details.append({
+                                'email_id': bd.email_id,
+                                'platform': bd.platform.value if bd.platform else None,
+                                'reservation_id': bd.reservation_id,
+                                'guest_name': bd.guest_name,
+                                'property_name': bd.property_name,
+                            })
+                        else:
+                            failed_emails.append({'email_id': email_data.email_id, 'error': parse_result.error_message, 'platform': platform_name})
+                    except Exception as e:
+                        failed_emails.append({'email_id': email_data.email_id, 'error': str(e), 'platform': "error"})
+                
+                # Sync to PostgreSQL
+                new_count = 0
+                if successful_bookings:
+                    for b in successful_bookings:
+                        try:
+                            from .api.models import CreateBookingRequest
+                            req = CreateBookingRequest(
+                                reservation_id=b.reservation_id,
+                                platform=b.platform.value if hasattr(b.platform, "value") else b.platform,
+                                guest_name=b.guest_name,
+                                guest_phone=b.guest_phone,
+                                guest_email=b.guest_email,
+                                check_in_date=b.check_in_date,
+                                check_out_date=b.check_out_date,
+                                property_id=b.property_id,
+                                property_name=b.property_name,
+                                number_of_guests=b.number_of_guests,
+                                total_amount=b.total_amount,
+                                currency=b.currency,
+                                booking_date=b.booking_date,
+                                email_id=b.email_id,
+                                raw_data=b.raw_data
+                            )
+                            # Check if exists
+                            existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
+                            
+                            if not existing:
+                                new_count += 1
+                                if not dry_run:
+                                    res = await booking_service.create_booking(req)
+                                    if res.success:
+                                        self.booking_logger.log_new_booking(b.to_dict())
+                                        self.notifier.send_welcome(b)
+                                        await booking_service.automation_service.log_rule_execution("New Booking Processed", "success")
+                            elif not dry_run:
+                                # Update existing if needed
+                                await booking_service.create_booking(req)
+                                
+                        except Exception as e:
+                            self.logger.error(f"Sync failed for {b.reservation_id}: {e}")
+                    
+                    # COMMIT CHANGES TO POSTGRESQL
+                    if not dry_run:
+                        await session.commit()
+                        self.logger.info("Database sync committed successfully")
+
+                self.booking_logger.print_summary()
+                return {
+                    'emails_processed': len(emails),
+                    'bookings_parsed': len(successful_bookings),
+                    'new_bookings': new_count,
+                    'failed_emails': failed_emails,
+                    'parsed_bookings': parsed_details
+                }
+                
         except Exception as e:
             self.logger.error("Error in email processing", error=str(e))
-            self.booking_logger.log_error(e, "Main processing error")
             return {'error': str(e)}
     
     def get_booking_stats(self) -> dict:
@@ -428,8 +262,8 @@ class BookingAutomation:
 @click.command()
 @click.option('--platform', type=click.Choice(['vrbo', 'airbnb', 'booking', 'plumguide']), 
               help='Specific platform to process')
-@click.option('--since-days', type=int, 
-              help='Number of days to look back for emails')
+@click.option('--since-days', type=int, default=1,
+              help='Number of days to look back for emails (default: 1 for 24 hours)')
 @click.option('--limit', type=int, 
               help='Maximum number of emails to process')
 @click.option('--dry-run', is_flag=True, 
@@ -443,55 +277,38 @@ class BookingAutomation:
 def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
     """
     Vacation Rental Booking Automation System.
-    
-    Automatically extracts booking data from vacation rental platform emails
-    and syncs them to Supabase.
     """
     try:
         # Initialize automation system
         automation = BookingAutomation(log_level, log_file)
         
-        if stats:
-            # Show statistics only
-            stats_data = automation.get_booking_stats()
-            if 'error' in stats_data:
-                click.echo(f"Error: {stats_data['error']}")
-                click.get_current_context().exit(1)
-            
-            click.echo("Booking Statistics:")
-            click.echo(f"Total bookings: {stats_data.get('total_bookings', 0)}")
-            for platform_name, count in stats_data.get('by_platform', {}).items():
-                click.echo(f"  {platform_name}: {count}")
-            return 0
-        
-        # Process emails
+        # Process emails (async)
         platform_enum = None
         if platform:
             platform_enum = Platform(platform)
         
-        results = automation.process_emails(
+        results = asyncio.run(automation.process_emails(
             platform=platform_enum,
             since_days=since_days,
             limit=limit,
             dry_run=dry_run
-        )
+        ))
         
         if 'error' in results:
             click.echo(f"Error: {results['error']}")
-            click.get_current_context().exit(1)
+            sys.exit(1)
         
         # Print results
         click.echo(f"\nProcessing completed:")
         click.echo(f"  Emails processed: {results['emails_processed']}")
         click.echo(f"  Bookings parsed: {results['bookings_parsed']}")
         click.echo(f"  New bookings: {results['new_bookings']}")
-        click.echo(f"  Duplicate bookings: {results['duplicate_bookings']}")
         click.echo(f"  Failed emails: {len(results['failed_emails'])}")
-        click.echo(f"  Sync errors: {len(results['sync_errors'])}")
+        
         if results.get('parsed_bookings'):
             click.echo("\nParsed bookings (up to 10):")
             for item in results['parsed_bookings'][:10]:
-                click.echo(f"  - email_id={item['email_id']}, platform={item['platform']}, reservation_id={item['reservation_id']}, guest_name={item['guest_name']}, guest_email={item['guest_email']}, property_name={item['property_name']}, property_id={item['property_id']}")
+                click.echo(f"  - email_id={item['email_id']}, platform={item['platform']}, reservation_id={item['reservation_id']}, guest_name={item['guest_name']}, property_name={item['property_name']}")
         
         if dry_run:
             click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to database")
@@ -499,9 +316,8 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
         return 0
         
     except Exception as e:
-        click.echo(f"Fatal error: {str(e)}")
-        click.get_current_context().exit(1)
-
+        click.echo(f"Fatal error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

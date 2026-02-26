@@ -1,17 +1,15 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
-from ...supabase_sync.supabase_client import SupabaseClient
 from ..services.property_service import PropertyService
+from ..dependencies import get_property_service
 import logging
 
 router = APIRouter(tags=["iCal"])
 public_router = APIRouter(tags=["iCal"])
 
-# Initialize logger and Supabase client
+# Initialize logger
 logger = logging.getLogger(__name__)
-supabase_client = SupabaseClient()
-property_service = PropertyService()
 
 
 class PropertyCreate(BaseModel):
@@ -23,11 +21,11 @@ class PropertyCreate(BaseModel):
     status: str | None = None
 
 @router.post("/property")
-async def create_property(property_data: PropertyCreate):
+async def create_property(property_data: PropertyCreate, service: PropertyService = Depends(get_property_service)):
     """
     Save property info and generate its iCal feed URL.
     """
-    result = property_service.create_property(
+    result = await service.create_property(
         name=property_data.name,
         address=property_data.address,
         vrbo_id=property_data.vrbo_id,
@@ -44,10 +42,11 @@ async def create_property(property_data: PropertyCreate):
 @router.get("/property")
 async def get_properties(
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
+    service: PropertyService = Depends(get_property_service)
 ):
     """Fetch all properties with pagination (service-based)."""
-    result = property_service.get_properties(page, limit)
+    result = await service.get_properties(page, limit)
 
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["error"])
@@ -55,24 +54,24 @@ async def get_properties(
     return result
 
 @router.delete("/property/{property_id}")
-async def delete_property(property_id: str):
+async def delete_property(property_id: int, service: PropertyService = Depends(get_property_service)):
     """Delete a property by ID (service-based)."""
-    result = property_service.delete_property(property_id)
+    result = await service.delete_property(property_id)
 
     if not result["success"]:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
    
 
-async def generate_ical_feed(property_id: str):
+async def generate_ical_feed(property_id: int, service: PropertyService = Depends(get_property_service)):
     """
     Generate iCal file for a given property.
     """
-    prop = property_service.get_property_by_id(property_id)
+    prop = await service.get_property(property_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    ical_content = property_service.generate_ical_feed(prop)
+    ical_content = await service.generate_ical_feed(prop)
     return Response(
         content=ical_content,
         media_type="text/calendar",

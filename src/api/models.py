@@ -112,7 +112,7 @@ class CreateBookingRequest(BaseModel):
     """Request model for creating a booking with services."""
     reservation_id: str = Field(..., description="Reservation ID")
     platform: Platform = Field(..., description="Booking platform")
-    guest_name: str = Field(..., description="Guest name")
+    guest_name: Optional[str] = Field("Unknown Guest", description="Guest name")
     guest_phone: Optional[str] = Field(None, description="Guest phone number")
     guest_email: Optional[str] = Field(None, description="Guest email")
     check_in_date: datetime = Field(..., description="Check-in date")

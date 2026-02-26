@@ -2,14 +2,16 @@ import os
 import base64
 from typing import Optional, Dict, Any
 from cryptography.fernet import Fernet
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from datetime import datetime
 
-from ...supabase_sync.supabase_client import SupabaseClient
 from config.settings import supabase_config
 
 
 class AuthService:
-    def __init__(self):
-        self.supabase = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
         self.fernet = self._build_fernet()
 
     def _build_fernet(self) -> Fernet:
@@ -29,11 +31,7 @@ class AuthService:
     def decrypt(self, token: str) -> str:
         return self.fernet.decrypt(token.encode()).decode()
 
-    def save_user(self, email: str, password: str, first_name: Optional[str] = None, last_name: Optional[str] = None) -> Dict[str, Any]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
+    async def save_user(self, email: str, password: str, first_name: Optional[str] = None, last_name: Optional[str] = None) -> Dict[str, Any]:
         encrypted = self.encrypt(password)
         payload = {"email": email, "password": encrypted}
         if first_name is not None:
@@ -41,80 +39,58 @@ class AuthService:
         if last_name is not None:
             payload["last_name"] = last_name
 
-        existing = (
-            self.supabase.client
-            .table("users")
-            .select("email")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
-
-        if existing.data:
+        # Check if email exists
+        check_query = text("SELECT email FROM users WHERE email = :email LIMIT 1")
+        result = await self.session.execute(check_query, {"email": email})
+        if result.fetchone():
             raise ValueError("EMAIL_ALREADY_REGISTERED")
-        else:
-            insert_result = (
-                self.supabase.client
-                .table("users")
-                .insert(payload)
-                .execute()
-            )
-            data = insert_result.data[0] if insert_result.data else payload
-            return {
-                "email": data.get("email"),
-                "password": data.get("password"),
-                "first_name": data.get("first_name"),
-                "last_name": data.get("last_name"),
-            }
-
-    def get_user(self, email: str) -> Optional[Dict[str, Any]]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        result = (
-            self.supabase.client
-            .table("users")
-            .select("email,password,first_name,last_name")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
-        if result.data:
-            return result.data[0]
-        return None
-
-    def update_profile(self, email: str, first_name: str, last_name: str) -> Dict[str, Any]:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-        (
-            self.supabase.client
-            .table("users")
-            .update({"first_name": first_name, "last_name": last_name})
-            .eq("email", email)
-            .execute()
-        )
-
-        # Return updated data
-        user = self.get_user(email) or {"email": email}
+            
+        # Insert new user
+        columns = ", ".join(payload.keys())
+        placeholders = ", ".join([f":{k}" for k in payload.keys()])
+        insert_query = text(f"INSERT INTO users ({columns}) VALUES ({placeholders}) RETURNING *")
+        
+        result = await self.session.execute(insert_query, payload)
+        row = result.fetchone()
+        
+        if not row:
+            raise Exception("Failed to save user")
+            
+        data = dict(row._mapping)
         return {
-            "email": user.get("email"),
-            "first_name": user.get("first_name"),
-            "last_name": user.get("last_name"),
+            "email": data.get("email"),
+            "password": data.get("password"),
+            "first_name": data.get("first_name"),
+            "last_name": data.get("last_name"),
         }
 
-    def update_password(self, email: str, password: str) -> bool:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
+    async def get_user(self, email: str) -> Optional[Dict[str, Any]]:
+        query = text("SELECT email, password, first_name, last_name FROM users WHERE email = :email LIMIT 1")
+        result = await self.session.execute(query, {"email": email})
+        row = result.fetchone()
+        if row:
+            return dict(row._mapping)
+        return None
+
+    async def update_profile(self, email: str, first_name: str, last_name: str) -> Dict[str, Any]:
+        query = text("UPDATE users SET first_name = :first_name, last_name = :last_name, updated_at = :updated_at WHERE email = :email RETURNING *")
+        result = await self.session.execute(query, {
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "updated_at": datetime.utcnow()
+        })
+        row = result.fetchone()
+        if not row:
+            raise Exception("User not found")
+        return dict(row._mapping)
+
+    async def update_password(self, email: str, password: str) -> bool:
         encrypted = self.encrypt(password)
-        (
-            self.supabase.client
-            .table("users")
-            .update({"password": encrypted})
-            .eq("email", email)
-            .execute()
-        )
+        query = text("UPDATE users SET password = :password, updated_at = :updated_at WHERE email = :email")
+        await self.session.execute(query, {
+            "password": encrypted,
+            "email": email,
+            "updated_at": datetime.utcnow()
+        })
         return True

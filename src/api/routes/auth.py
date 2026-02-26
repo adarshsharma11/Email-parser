@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 import os
 from fastapi import Request
 from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse, ProfileUpdateRequest, ForgotPasswordRequest, ResetPasswordRequest
-from ..dependencies import get_logger
+from ..dependencies import get_logger, get_auth_service
 from ..services.auth_service import AuthService
 from ...guest_communications.email_client import EmailClient
 from ..security.jwt import create_token
@@ -12,11 +12,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=AuthResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def register(req: RegisterRequest):
+async def register(req: RegisterRequest, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
-        service = AuthService()
-        saved = service.save_user(req.email, req.password, req.first_name, req.last_name)
+        saved = await auth_service.save_user(req.email, req.password, req.first_name, req.last_name)
         token = create_token({"sub": req.email}, exp_seconds=86400)
         logger.info("user_registered", email=req.email)
         return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email}}
@@ -29,16 +28,15 @@ async def register(req: RegisterRequest):
 
 
 @router.post("/login", response_model=AuthResponse, responses={401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
-        service = AuthService()
-        user = service.get_user(req.email)
+        user = await auth_service.get_user(req.email)
         if not user:
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
         try:
             stored = user.get("password")
-            decrypted = service.decrypt(stored)
+            decrypted = auth_service.decrypt(stored)
         except Exception:
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
         if decrypted != req.password:
@@ -73,14 +71,13 @@ async def logout(request: Request):
 
 
 @router.put("/profile", response_model=AuthResponse, responses={401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def update_profile(req: ProfileUpdateRequest, request: Request):
+async def update_profile(req: ProfileUpdateRequest, request: Request, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
         email = getattr(request.state, "user_email", None)
         if not email:
             raise HTTPException(status_code=401, detail={"message": "Unauthorized"})
-        service = AuthService()
-        updated = service.update_profile(email, req.first_name, req.last_name)
+        updated = await auth_service.update_profile(email, req.first_name, req.last_name)
         logger.info("user_profile_updated", email=email)
         return {"success": True, "message": "Profile updated", "data": updated}
     except HTTPException:
@@ -90,11 +87,10 @@ async def update_profile(req: ProfileUpdateRequest, request: Request):
 
 
 @router.post("/forgot-password", response_model=AuthResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def forgot_password(req: ForgotPasswordRequest):
+async def forgot_password(req: ForgotPasswordRequest, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
-        service = AuthService()
-        user = service.get_user(req.email)
+        user = await auth_service.get_user(req.email)
         if not user:
             raise HTTPException(status_code=400, detail={"message": "Email not found"})
         exp = int(os.getenv("PASSWORD_RESET_EXP_SECONDS", "1800"))
@@ -135,7 +131,7 @@ async def forgot_password(req: ForgotPasswordRequest):
 
 
 @router.post("/reset-password", response_model=AuthResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def reset_password(req: ResetPasswordRequest):
+async def reset_password(req: ResetPasswordRequest, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
         from ..security.jwt import verify_token
@@ -145,8 +141,7 @@ async def reset_password(req: ResetPasswordRequest):
         email = payload.get("sub")
         if not email:
             raise HTTPException(status_code=400, detail={"message": "Invalid reset token"})
-        service = AuthService()
-        ok = service.update_password(email, req.new_password)
+        ok = await auth_service.update_password(email, req.new_password)
         logger.info("password_reset_completed", email=email)
         return {"success": ok, "message": "Password reset successful" if ok else "Password reset failed", "data": {"email": email}}
     except HTTPException:
