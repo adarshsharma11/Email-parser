@@ -149,7 +149,7 @@ async def toggle_activity_rule_status(
         rule_id: ID of the rule
         enable: True to enable, False to disable
     """
-    result = service.toggle_status(rule_id, enable)
+    result = await service.toggle_status(rule_id, enable)
     return {
         "success": True,
         "message": f"Activity rule {'enabled' if enable else 'disabled'} successfully",
