@@ -3,12 +3,14 @@ from .sms_client import SMSClient
 from .email_client import EmailClient
 from ..utils.logger import get_logger
 from ..utils.models import BookingData
+import os
 
 class Notifier:
-    def __init__(self):
+    def __init__(self, email_credentials: dict = None):
         self.sms = SMSClient()
         self.email = EmailClient()
         self.logger = get_logger("notifier")
+        self.email_credentials = email_credentials
 
     def send_welcome(self, booking: BookingData) -> bool:
         """Send both email and SMS welcome messages."""
@@ -31,7 +33,7 @@ class Notifier:
             )
 
             if booking.guest_email:
-                self.email.send(to=booking.guest_email, subject=subject, body=email_body)
+                self.email.send(to=booking.guest_email, subject=subject, body=email_body, credentials=self.email_credentials)
 
             if booking.guest_phone:
                 self.sms.send(to=booking.guest_phone, body=sms_body)
@@ -60,10 +62,11 @@ class Notifier:
             self.logger.error("welcome_whatsapp_failed", error=str(e), reservation_id=booking.reservation_id)
             return False
 
-    def notify_cleaning_task(self, crew: dict, task: dict, include_calendar_invite: bool = True) -> bool:
+    def notify_cleaning_task(self, crew: dict, task: dict, booking: BookingData = None, include_calendar_invite: bool = True) -> bool:
         """
         crew: {id, name, phone, email}
         task: {id, booking_id, property_id, scheduled_date, ...}
+        booking: Optional BookingData for guest details
         """
         try:
             msg = f"Cleaning task scheduled for {task['property_id']} on {task['scheduled_date']}. Please confirm."
@@ -98,13 +101,25 @@ class Notifier:
             if crew_email:
                 try:
                     subject = f"Cleaning Assignment – {task['property_id']} on {task['scheduled_date']}"
-                    body = f"Hi {crew_name}<br/><br/>{msg}<br/><br/>Task ID: {task['id']}"
+                    
+                    guest_details_html = ""
+                    if booking:
+                        guest_details_html = f"""
+                        <b>Guest Details:</b><br/>
+                        Name: {booking.guest_name}<br/>
+                        Phone: {booking.guest_phone or 'N/A'}<br/>
+                        Email: {booking.guest_email or 'N/A'}<br/>
+                        Check-in: {booking.check_in_date}<br/>
+                        Check-out: {booking.check_out_date}<br/><br/>
+                        """
+
+                    body = f"Hi {crew_name}<br/><br/>{msg}<br/><br/>{guest_details_html}"
                     
                     self.logger.info("Sending email to crew", 
                                    crew_name=crew_name, 
                                    email=crew_email, 
                                    subject=subject)
-                    self.email.send(to=crew_email, subject=subject, body=body)
+                    self.email.send(to=crew_email, subject=subject, body=body, html=True, credentials=self.email_credentials)
                     email_success = True
                     self.logger.info("Email sent successfully", crew_name=crew_name, email=crew_email)
                 except Exception as e:
@@ -139,4 +154,65 @@ class Notifier:
                             task_id=task.get('id'),
                             crew_name=crew.get('name'),
                             error_type=type(e).__name__)
+            return False
+
+    def notify_service_provider(self, provider: dict, service_details: dict) -> bool:
+        """
+        Notify a service provider about a newly assigned service.
+        provider: {id, name, email, phone}
+        service_details: {reservation_id, service_name, service_date, service_time, property_name}
+        """
+        try:
+            provider_name = provider.get("name", "Service Provider")
+            provider_email = provider.get("email")
+            provider_phone = provider.get("phone")
+            
+            reservation_id = service_details.get("reservation_id")
+            service_name = service_details.get("service_name", "Service")
+            service_date = service_details.get("service_date")
+            service_time = service_details.get("service_time")
+            property_name = service_details.get("property_name", "Property")
+
+            subject = f"New Service Assignment: {service_name} at {property_name}"
+            msg = f"New service '{service_name}' has been assigned to you for {property_name} on {service_date} at {service_time}."
+            
+            body = f"""
+            Hi {provider_name},<br/><br/>
+            {msg}<br/><br/>
+            <b>Reservation ID:</b> {reservation_id}<br/>
+            <b>Service:</b> {service_name}<br/>
+            <b>Date:</b> {service_date}<br/>
+            <b>Time:</b> {service_time}<br/>
+            <b>Property:</b> {property_name}<br/><br/>
+            Please confirm your availability.
+            """
+
+            self.logger.info("Notifying service provider", 
+                           provider_name=provider_name, 
+                           service_name=service_name,
+                           reservation_id=reservation_id)
+
+            email_success = False
+            if provider_email:
+                try:
+                    self.email.send(to=provider_email, subject=subject, body=body, html=True, credentials=self.email_credentials)
+                    email_success = True
+                    self.logger.info("Service provider email sent successfully", email=provider_email)
+                except Exception as e:
+                    self.logger.error("Service provider email failed", email=provider_email, error=str(e))
+
+            sms_success = False
+            if provider_phone:
+                try:
+                    sms_body = f"Hi {provider_name}, new service '{service_name}' assigned for {property_name} on {service_date} at {service_time}."
+                    self.sms.send(to=provider_phone, body=sms_body)
+                    sms_success = True
+                    self.logger.info("Service provider SMS sent successfully", phone=provider_phone)
+                except Exception as e:
+                    self.logger.error("Service provider SMS failed", phone=provider_phone, error=str(e))
+
+            return email_success or sms_success
+
+        except Exception as e:
+            self.logger.error("Error in notify_service_provider", error=str(e))
             return False

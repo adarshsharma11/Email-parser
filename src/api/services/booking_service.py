@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, date
 import time
 import json
 import asyncio
+import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func, and_, or_
 
@@ -14,11 +15,14 @@ from ..models import (
     CreateBookingRequest, CreateBookingResponse, BookingStatus
 )
 from ..config import settings
+from config.settings import app_config
 from ...guest_communications.notifier import Notifier
 from ...utils.models import BookingData, Platform
 from .crew_service import CrewService
 from .automation_service import AutomationService
 from .activity_rule_service import ActivityRuleService
+from .service_category_service import ServiceCategoryService
+from .user_service import UserService
 
 
 class BookingService:
@@ -29,18 +33,77 @@ class BookingService:
         self.logger = logger
         self._cache = {}
         self._cache_ttl = settings.cache_ttl_seconds
-        self.notifier = Notifier()
         self.crew_service = CrewService(session)
+        self.service_category_service = ServiceCategoryService(session)
+        self.user_service = UserService(session)
+        self.notifier = None # Initialized asynchronously if needed
         
         # Initialize AutomationService with dependencies
         activity_rule_service = ActivityRuleService(session, logger)
         self.automation_service = AutomationService(activity_rule_service)
+
+    async def _get_notifier(self) -> Notifier:
+        """Get or initialize notifier with dynamic credentials if not development."""
+        if self.notifier:
+            return self.notifier
+            
+        credentials = None
+        app_env = os.getenv("APP_ENV", "development")
+        
+        if app_env != "development":
+            try:
+                # Try to fetch from user_credentials with platform='crdetails'
+                table_name = app_config.users_collection
+                query = text(f"SELECT email, password FROM {table_name} WHERE platform = 'crdetails' LIMIT 1")
+                result = await self.session.execute(query)
+                row = result.fetchone()
+                
+                # If no 'crdetails' platform, try fetching the first available from user_credentials
+                if not row:
+                    self.logger.info(f"No 'crdetails' platform in {table_name}, trying first available row")
+                    query = text(f"SELECT email, password FROM {table_name} LIMIT 1")
+                    result = await self.session.execute(query)
+                    row = result.fetchone()
+
+                # If still no row, maybe 'crdetails' is the table name itself?
+                if not row:
+                    try:
+                        self.logger.info("Trying to fetch from 'crdetails' table directly")
+                        query = text("SELECT email, password FROM crdetails LIMIT 1")
+                        result = await self.session.execute(query)
+                        row = result.fetchone()
+                    except Exception:
+                        self.logger.info("'crdetails' table does not exist")
+
+                if row:
+                    row_dict = dict(row._mapping)
+                    cred_email = row_dict.get("email")
+                    cred_password = row_dict.get("password")
+                    
+                    if cred_email and cred_password:
+                        # Decrypt password using UserService
+                        decrypted_password = self.user_service.decrypt(cred_password)
+                        credentials = {
+                            "username": cred_email,
+                            "password": decrypted_password
+                        }
+                        self.logger.info(f"Using database credentials for email: {cred_email}")
+                    else:
+                        self.logger.warning("Found database credential but email or password missing")
+                else:
+                    self.logger.warning("No email credentials found in database")
+            except Exception as e:
+                self.logger.error(f"Failed to fetch production email credentials: {e}")
+        
+        self.notifier = Notifier(email_credentials=credentials)
+        return self.notifier
     
     async def create_booking_process(self, request: CreateBookingRequest) -> AsyncGenerator[str, None]:
         """
         Process booking creation with step-by-step status updates.
         """
         try:
+            notifier = await self._get_notifier()
             # Step 1: Create Booking Record
             yield json.dumps({
                 "step": "database",
@@ -99,9 +162,9 @@ class BookingService:
                         property_id=request.property_id
                     )
                     
-                    self.notifier.send_welcome(booking_data)
+                    notifier.send_welcome(booking_data)
                     if request.guest_phone:
-                        self.notifier.send_welcome_whatsapp(booking_data)
+                        notifier.send_welcome_whatsapp(booking_data)
                     
                     await self.automation_service.log_rule_execution("Guest Welcome Message", "success")
 
@@ -155,7 +218,7 @@ class BookingService:
                                     "scheduled_date": scheduled_date
                                 }
                                 
-                                if self.notifier.notify_cleaning_task(crew, task_for_notify):
+                                if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
                                     notified_count = 1
                                     from ...calendar_integration.google_calendar_client import GoogleCalendarClient
                                     calendar_client = GoogleCalendarClient()
@@ -188,6 +251,47 @@ class BookingService:
                     "message": "Cleaning task rule is disabled"
                 }, default=str) + "\n"
 
+            # Step 5: Service Provider Notifications
+            if request.services:
+                yield json.dumps({
+                    "step": "service_notification",
+                    "status": "in_progress",
+                    "message": f"Notifying {len(request.services)} service providers..."
+                }, default=str) + "\n"
+                
+                notified_services = 0
+                for svc in request.services:
+                    try:
+                        service_category = await self.service_category_service.get_category(svc.service_id)
+                        if service_category:
+                            provider = {
+                                "id": service_category.get("id"),
+                                "name": service_category.get("category_name", "Service Provider"),
+                                "email": service_category.get("email"),
+                                "phone": service_category.get("phone")
+                            }
+                            
+                            service_details = {
+                                "reservation_id": request.reservation_id,
+                                "service_name": service_category.get("category_name", "Service"),
+                                "service_date": svc.service_date.strftime("%Y-%m-%d") if hasattr(svc.service_date, "strftime") else str(svc.service_date),
+                                "service_time": svc.time,
+                                "property_name": request.property_name or "Vacation Rental"
+                            }
+                            
+                            if notifier.notify_service_provider(provider, service_details):
+                                notified_services += 1
+                        else:
+                            self.logger.warning(f"No service category found for ID {svc.service_id}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to notify service provider for service {svc.service_id}: {e}")
+                
+                yield json.dumps({
+                    "step": "service_notification",
+                    "status": "completed",
+                    "message": f"Notified {notified_services} service providers"
+                }, default=str) + "\n"
+
             # Final Success
             yield json.dumps({
                 "step": "complete",
@@ -214,7 +318,6 @@ class BookingService:
                 booking_dict["platform"] = booking_dict["platform"].value
             
             # Ensure raw_data is a JSON string if it's a dict
-            import json
             if "raw_data" in booking_dict and isinstance(booking_dict["raw_data"], dict):
                 booking_dict["raw_data"] = json.dumps(booking_dict["raw_data"], default=str)
             
