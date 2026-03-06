@@ -159,42 +159,51 @@ class GmailClient:
                 since_date = datetime.now() - timedelta(days=since_days)
                 criteria += ["SINCE", since_date.strftime("%d-%b-%Y")]
             
-            # Text query
-            if text_query:
-                criteria += ["TEXT", text_query]
+            # Use X-GM-RAW for Gmail-style searching if it looks like a Gmail query
+            use_raw = False
+            if text_query and any(k in text_query for k in ["from:", "to:", "subject:", "OR", "AND"]):
+                use_raw = True
             
-            # Platform filters
-            if platform:
-                if platform == Platform.AIRBNB:
-                    criteria += ["TEXT", "airbnb"]
-                elif platform == Platform.VRBO:
-                    criteria += ["OR", "TEXT", "vrbo", "TEXT", "homeaway"]
-                elif platform == Platform.BOOKING:
-                    criteria += ["TEXT", "booking.com"]
-                elif platform == Platform.PLUMGUIDE:
-                    criteria += ["TEXT", "plumguide"]
-            elif match_any_booking:
-                # Search for ANY of the booking platforms using recursive OR
-                terms = [
-                    ["TEXT", "airbnb"],
-                    ["TEXT", "vrbo"],
-                    ["TEXT", "homeaway"],
-                    ["TEXT", "booking.com"],
-                    ["TEXT", "plumguide"]
-                ]
-                criteria += self._build_or_chain(terms)
+            if use_raw:
+                # Gmail raw search - needs to be quoted
+                self.logger.debug("Using X-GM-RAW search", query=text_query)
+                # status, email_ids = self.connection.uid("search", "X-GM-RAW", text_query)
+                # Correct IMAP syntax for X-GM-RAW is SEARCH X-GM-RAW "query"
+                status, email_ids = self.connection.search(None, 'X-GM-RAW', f'"{text_query}"')
             else:
-                # No specific platform and not restricting to booking -> ALL
-                # Only add ALL if no other criteria exist, otherwise implicit AND applies
+                # Platform filters (standard IMAP)
+                if platform:
+                    if platform == Platform.AIRBNB:
+                        criteria += ["TEXT", "airbnb"]
+                    elif platform == Platform.VRBO:
+                        criteria += ["OR", "TEXT", "vrbo", "TEXT", "homeaway"]
+                    elif platform == Platform.BOOKING:
+                        criteria += ["TEXT", "booking.com"]
+                    elif platform == Platform.PLUMGUIDE:
+                        criteria += ["TEXT", "plumguide"]
+                elif match_any_booking:
+                    # Search for ANY of the booking platforms using recursive OR
+                    terms = [
+                        ["TEXT", "airbnb"],
+                        ["TEXT", "vrbo"],
+                        ["TEXT", "homeaway"],
+                        ["TEXT", "booking.com"],
+                        ["TEXT", "plumguide"]
+                    ]
+                    criteria += self._build_or_chain(terms)
+                else:
+                    # No specific platform and not restricting to booking -> ALL
+                    # Only add ALL if no other criteria exist, otherwise implicit AND applies
+                    if not criteria:
+                        criteria = ["ALL"]
+
+                # If criteria is empty (shouldn't happen due to logic above, but safe fallback)
                 if not criteria:
                     criteria = ["ALL"]
 
-            # If criteria is empty (shouldn't happen due to logic above, but safe fallback)
-            if not criteria:
-                criteria = ["ALL"]
-
-            self.logger.debug("Searching emails with criteria", criteria=criteria, mailbox=mailbox)
-            status, email_ids = self.connection.search(None, *criteria)
+                self.logger.debug("Searching emails with criteria", criteria=criteria, mailbox=mailbox)
+                status, email_ids = self.connection.search(None, *criteria)
+            
             if status != "OK":
                 return []
             email_id_list = email_ids[0].split()

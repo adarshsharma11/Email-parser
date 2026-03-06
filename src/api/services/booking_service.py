@@ -321,14 +321,27 @@ class BookingService:
             if "raw_data" in booking_dict and isinstance(booking_dict["raw_data"], dict):
                 booking_dict["raw_data"] = json.dumps(booking_dict["raw_data"], default=str)
             
-            # Upsert booking
+            # Upsert booking - Use COALESCE for specific fields to avoid overwriting with null
             columns = ", ".join(booking_dict.keys())
             placeholders = ", ".join([f":{k}" for k in booking_dict.keys()])
+            
+            # Fields that we want to keep if the new one is null
+            coalesce_fields = {'total_amount', 'guest_email', 'guest_phone', 'property_name', 'property_id', 'nights', 'number_of_guests'}
+            
+            set_clause = []
+            for k in booking_dict.keys():
+                if k == 'reservation_id':
+                    continue
+                if k in coalesce_fields:
+                    set_clause.append(f"{k} = COALESCE(EXCLUDED.{k}, bookings.{k})")
+                else:
+                    set_clause.append(f"{k} = EXCLUDED.{k}")
+            
             query = text(f"""
                 INSERT INTO bookings ({columns}) 
                 VALUES ({placeholders}) 
                 ON CONFLICT (reservation_id) DO UPDATE 
-                SET {', '.join([f"{k} = EXCLUDED.{k}" for k in booking_dict.keys() if k != 'reservation_id'])},
+                SET {', '.join(set_clause)},
                     updated_at = NOW()
                 RETURNING *
             """)
@@ -475,8 +488,25 @@ class BookingService:
             res_data = await self.session.execute(text(data_query), params)
             rows = res_data.fetchall()
             
+            bookings_list = []
+            for row in rows:
+                b_dict = dict(row._mapping)
+                # Ensure nights is present and correct
+                if b_dict.get('nights') is None or b_dict.get('nights') == 0:
+                    ci = b_dict.get('check_in_date')
+                    co = b_dict.get('check_out_date')
+                    if ci and co:
+                        # Use date() to avoid time-of-day issues
+                        d1 = ci.date() if hasattr(ci, 'date') else ci
+                        d2 = co.date() if hasattr(co, 'date') else co
+                        delta = d2 - d1
+                        b_dict['nights'] = max(0, delta.days)
+                    else:
+                        b_dict['nights'] = 0
+                bookings_list.append(b_dict)
+
             return {
-                "bookings": [dict(row._mapping) for row in rows],
+                "bookings": bookings_list,
                 "total": total,
                 "page": page,
                 "limit": limit
@@ -490,6 +520,35 @@ class BookingService:
         result = await self.session.execute(query, {"rid": reservation_id})
         row = result.fetchone()
         return dict(row._mapping) if row else None
+
+    async def get_booking_by_property_and_dates(self, property_id: str, check_in: Any, check_out: Any) -> Optional[Dict[str, Any]]:
+        """Find a booking by property and dates to prevent duplicates."""
+        try:
+            # Handle potential string dates from raw_data
+            if isinstance(check_in, str):
+                from datetime import datetime
+                check_in = datetime.fromisoformat(check_in.replace('Z', '+00:00'))
+            if isinstance(check_out, str):
+                from datetime import datetime
+                check_out = datetime.fromisoformat(check_out.replace('Z', '+00:00'))
+
+            query = text("""
+                SELECT * FROM bookings 
+                WHERE property_id = :pid 
+                AND DATE(check_in_date) = DATE(:ci) 
+                AND DATE(check_out_date) = DATE(:co)
+                LIMIT 1
+            """)
+            result = await self.session.execute(query, {
+                "pid": property_id,
+                "ci": check_in,
+                "co": check_out
+            })
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+        except Exception as e:
+            self.logger.error(f"Error checking duplicate by dates: {e}")
+            return None
 
     async def update_guest_phone(self, reservation_id: str, guest_phone: str) -> bool:
         try:

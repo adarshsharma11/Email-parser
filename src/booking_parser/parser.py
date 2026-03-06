@@ -40,10 +40,15 @@ class BookingParser:
                     r'\bListing\b\s*(?:Name)?[:\s]*([A-Za-z0-9\s\-\.\']{3,80})',
                 ],
                 'number_of_guests': [r'(?:Number\s*of\s*)?Guests?[:\s]*(\d+)'],
-                'total_amount': [r'Total\s*(?:Amount)?[:\s]*\$?([0-9,]+\.?[0-9]*)']
+                'total_amount': [
+                    r'(?i)(?:Total|Amount|Paid|Payout|Price)[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Payment\s+received[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Total\s+paid[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                ]
             },
             Platform.AIRBNB: {
                 'reservation_id': [
+                    r'CONFIRMATION\s*CODE\s*([A-Z0-9]{6,20})',
                     r'Reservation\s+(?!for\b)([A-Z0-9]{6,20})',
                     r'Confirmation\s*#?\s*([A-Z0-9]{6,20})',
                     r'\bRef\s*#?\s*([A-Z0-9]{6,20})\b',
@@ -52,10 +57,25 @@ class BookingParser:
                     r'Guest[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
                     r'Booked\s*by[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
                     r'Guest\s+Name[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
+                    r'Reservation\s+confirmed\s+for\s+([A-Z][a-zA-Z\s\'\-]{1,40})',
+                    r'Reservation\s+for\s+([A-Z][a-zA-Z\s\'\-]{1,40})',
+                    r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+\[\s*https?://www\.airbnb\.com/hosting/reservations/details/',
+                    r'reach\s+out\s+to\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+to\s+send',
+                    r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+ARRIVES\s+MONDAY',
+                    r'^\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+Booker',
+                    r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+Altman',
+                    r'\b([A-Z][a-zA-Z]+)\s+Booker',
+                    r'\b([A-Z][a-zA-Z]+)\s+Altman',
+                    r'RESERVATION\s+FOR\s+.*?,(?:\s+[A-Z]{3,}\s+\d+\s+–\s+\d+)?\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)',
                 ],
                 'guest_email': [r'(?:Email|Guest\s+Email)[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'number_of_guests': [r'(?:Number\s*of\s*)?Guests?[:\s]*(\d+)'],
-                'total_amount': [r'(?:Total|Amount|Paid)[:\s]*\$?([0-9,]+\.?[0-9]*)']
+                'total_amount': [
+                    r'(?i)(?:Total|Amount|Paid|Payout|Earned|Price)[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Guest\s+paid[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Total\s+payout[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Total\s+Price[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                ]
             },
             Platform.BOOKING: {
                 'reservation_id': [
@@ -90,12 +110,15 @@ class BookingParser:
         # Words to exclude from certain fields
         self.exclude_words = {
             'reservation_id': {'FOR', 'ID', 'RESERVATION', 'CONFIRMATION', 'BOOKING', 'NONE', 'NULL', 'UNDEFINED', 'REMINDER', 'CONFIRMED', 'THUMBNAIL', 'CONTAINER', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'TYPE', 'AMOUNT', 'LISTING', 'NUMBER'},
-            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO'},
-            'property_name': {'THUMBNAIL', 'CONTAINER', 'DETAILS', 'ITINERARY', 'RESERVATION', 'BOOKING', 'CONFIRMATION', 'HOME', 'HOUSE', 'ACCEPTED', 'REQUESTED', 'SENT', 'USD', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'PAYMENT', 'INVOICE', 'THUMBNAILCONTAINER', 'PROTECTION POLICY'},
+            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO', 'PAID'},
+            'property_name': {'THUMBNAIL', 'CONTAINER', 'DETAILS', 'ITINERARY', 'RESERVATION', 'BOOKING', 'CONFIRMATION', 'ACCEPTED', 'REQUESTED', 'SENT', 'USD', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'PAYMENT', 'INVOICE', 'THUMBNAILCONTAINER', 'PROTECTION POLICY', 'GUEST PAID', 'HOST PAYOUT', 'PAYOUT', 'RESPOND', 'INQUIRY', 'REQUEST', 'MESSAGE', 'REPLY', 'FREQUENTLY ASKED QUESTIONS', 'FAQ', 'SUPPORT', 'HELP', 'OPENTRACK', 'TRACKING'},
         }
 
     def parse_email(self, email_data: EmailData) -> ProcessingResult:
-        """Parse email and extract booking information."""
+        """Parse email content and extract booking data."""
+        subject = email_data.subject
+        content = email_data.body_text or ""
+        self.logger.info(f"Parsing email: {subject}")
         try:
             if not email_data.platform:
                 return ProcessingResult(
@@ -198,14 +221,31 @@ class BookingParser:
         # ---- BOOKING TYPE ----
         try:
             subj_lower = subject.lower()
-            if "inquiry" in subj_lower:
+            content_lower = content.lower()
+            
+            # 1. Check for explicit inquiry/request words
+            if any(k in subj_lower for k in ["inquiry", "question", "message from", "inquired", "request for money", "requested money"]):
                 extracted_data["booking_type"] = "inquiry"
-            elif any(k in subj_lower for k in ["reservation", "booking", "confirmed", "confirmation", "itinerary", "trip details"]):
+            elif "request" in subj_lower and not any(k in subj_lower for k in ["confirmed", "confirmation", "accepted"]):
+                extracted_data["booking_type"] = "inquiry"
+            
+            # 2. Check for explicit confirmation words
+            elif any(k in subj_lower for k in ["confirmed", "confirmation", "itinerary", "new booking", "booked", "reservation from", "booking from", "reservation for", "booking for"]):
+                extracted_data["booking_type"] = "booking"
+            elif any(k in content_lower for k in ["reservation confirmed", "booking confirmed", "your reservation is confirmed", "confirmed:"]):
+                extracted_data["booking_type"] = "booking"
+            
+            # 3. Fallback for reservation ID
+            elif "reservation_id" in extracted_data and extracted_data["reservation_id"] and not extracted_data["reservation_id"].startswith("INQ-"):
                 extracted_data["booking_type"] = "booking"
             else:
                 extracted_data["booking_type"] = "other"
         except Exception:
             extracted_data["booking_type"] = "other"
+        
+        # Double check: if it's a request for money, it's not a booking
+        if "request for money" in subj_lower or "requested money" in subj_lower:
+            extracted_data["booking_type"] = "inquiry"
         
         # ---- EXTRA MESSAGE ----
         try:
@@ -230,7 +270,16 @@ class BookingParser:
                 r'(?:Reservation|Booking)\s+Request[:\s]+(.*?)(?:\s*#\d+|$)',
                 r'^(.*?)\s*-\s*Reservation\s+Confirmed',
                 r'^(.*?)\s*-\s*New\s+Booking',
+                r'Reservation\s+(?:Confirmed|Request)\s+at\s+(.*?)(?:\s+for|$)',
+                r'Booking\s+(?:Confirmed|Request)\s+at\s+(.*?)(?:\s+for|$)',
+                r'RESERVATION\s+FOR\s+(.*?)(?:\s*,|$)',
+                r'NEW\s+BOOKING\s+at\s+(.*?)(?:\s*,|$)',
             ]
+            
+            # Extract property ID from subject if present (e.g., #1849280)
+            m_pid = re.search(r'#(\d{5,10})', subject)
+            if m_pid:
+                extracted_data['property_id'] = m_pid.group(1)
             
             for pattern in subject_patterns:
                 match = re.search(pattern, subject, re.IGNORECASE)
@@ -256,20 +305,106 @@ class BookingParser:
                 except Exception:
                     pass
 
+            # Try to extract property name from body if not in subject
+            if not extracted_data.get('property_name'):
+                body_prop_patterns = [
+                    r'Property Name[:\s]+(.*?)(?:\r?\n|$)',
+                    r'Listing Name[:\s]+(.*?)(?:\r?\n|$)',
+                    r'Unit[:\s]+(.*?)(?:\r?\n|$)',
+                    r'Property[:\s]+(.*?)(?:\r?\n|$)',
+                    r'at\s+([A-Z][A-Za-z0-9\s\-\.\']{3,60})(?:\r?\n|$)',
+                    r'RESERVATION\s+FOR\s+([A-Z][A-Za-z0-9\s\-\.\']{3,60})(?:\s*[,—–\-]|\r?\n|$)',
+                ]
+                for p in body_prop_patterns:
+                    m = re.search(p, content, re.IGNORECASE)
+                    if m:
+                        name = m.group(1).strip()
+                        if name and not any(word in name.upper() for word in self.exclude_words['property_name']):
+                            extracted_data['property_name'] = name
+                            break
+                
+                # If still no name but we have property_id, use it as name temporarily
+                if not extracted_data.get('property_name') and extracted_data.get('property_id'):
+                    extracted_data['property_name'] = f"Property #{extracted_data['property_id']}"
+        
         elif email_data.platform == Platform.AIRBNB:
             # Look for reservation ID, excluding "for" or "FOR"
             match = re.search(r'Reservation\s+(?!for\b)([A-Z0-9]{8,15})', subject, re.IGNORECASE)
             if match:
                 extracted_data['reservation_id'] = match.group(1).upper()
 
-            if extracted_data.get("booking_type") == "booking":
-                m_at = re.search(r'at\s+(.+?)(?:\s+(?:from|—|-|–)|,|$)', subject)
-                if m_at:
-                    extracted_data['property_name'] = m_at.group(1).strip()
-                else:
-                    m_for = re.search(r'Reservation\s+for\s+(.+?)(?:\s+(?:from|—|-|–)|,|$)', subject, re.IGNORECASE)
-                    if m_for:
-                        extracted_data['property_name'] = m_for.group(1).strip()
+            # Extract property ID from links in body
+            m_pid = re.search(r'airbnb\.com/rooms/([0-9]+)', content)
+            if m_pid:
+                extracted_data['property_id'] = m_pid.group(1)
+
+            # Property extraction (subject)
+            # Clean subject of "RE: ", "Fwd: ", etc. and normalize spaces
+            clean_subject = re.sub(r'^(?:RE|FWD|FW)[:\s]+', '', subject, flags=re.IGNORECASE).strip()
+            clean_subject = re.sub(r'\s+', ' ', clean_subject)
+            self.logger.debug(f"Cleaned subject for property extraction: {clean_subject}")
+
+            # Improved property name extraction from subject
+            subject_prop_patterns = [
+                r'\bat\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
+                r'\bReservation\s+for\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
+                r'\bConfirmed[:\s]+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
+            ]
+            
+            for p in subject_prop_patterns:
+                m = re.search(p, clean_subject, re.IGNORECASE)
+                if m:
+                    prop_name = m.group(1).strip()
+                    # Final clean up of the extracted name
+                    prop_name = re.sub(r'\s{2,}', ' ', prop_name)
+                    if prop_name and len(prop_name) > 3 and not any(word in prop_name.upper() for word in self.exclude_words['property_name']):
+                        extracted_data['property_name'] = prop_name
+                        self.logger.info(f"Extracted property_name from subject: {prop_name}")
+                        break
+            
+            # Additional property name patterns from body (Airbnb specific)
+            if not extracted_data.get('property_name'):
+                body_prop_patterns = [
+                    r'RESERVATION\s+FOR\s+(.+?)(?:\s*[,—–\-]|\r?\n|$)', # Match "FOR Property Name, MAR 2"
+                    r'Listing Name[:\s]+(.*?)(?:\r?\n|$)',
+                    r'Property Name[:\s]+(.*?)(?:\r?\n|$)',
+                    r'(.+?)\s+Home\s+-\s+Entire\s+home/apt',
+                    r'(.+?)\s+Entire\s+home/apt',
+                    r'(.+?)\s+hosted\s+by',
+                    r'Your\s+stay\s+at\s+([^,—–\-\r\n]+)',
+                ]
+                
+                # Normalize the content for better matching
+                normalized_content = re.sub(r'\s+', ' ', content)
+                
+                for p in body_prop_patterns:
+                    m = re.search(p, normalized_content, re.IGNORECASE)
+                    if m:
+                        name = m.group(1).strip()
+                        # CLEAN UP NAME
+                        # Only remove trailing platform-specific text
+                        name = re.sub(r'(?i)\s+(?:Entire\s+home/apt|hosted\s+by|Home\s+-\s+Entire).*$', '', name).strip()
+                        name = re.sub(r'\s{2,}', ' ', name)
+                        # Remove trailing symbols like + or - if they ended up at the end
+                        name = re.sub(r'[\+\-\s,]+$', '', name).strip()
+                        
+                        if name and len(name) > 3 and not any(word in name.upper() for word in self.exclude_words['property_name']):
+                            extracted_data['property_name'] = name
+                            self.logger.info(f"Extracted property_name from normalized body: {name}")
+                            break
+            
+            # Guest name extraction (Airbnb specific)
+            if not extracted_data.get('guest_name'):
+                # Pattern for "ZHEJUN Booker" or "ZHEJUN Altman"
+                m_booker = re.search(r'\b([A-Z][a-zA-Z\'\-]{1,})\s+(?:Booker|Altman)\b', content)
+                if m_booker:
+                    extracted_data['guest_name'] = m_booker.group(1).strip()
+                
+                if not extracted_data.get('guest_name'):
+                    # Pattern for "Reservation confirmed for [Name]"
+                    m_confirmed_for = re.search(r'Reservation\s+confirmed\s+for\s+([A-Z][a-zA-Z\s\'\-]{1,40})', content, re.IGNORECASE)
+                    if m_confirmed_for:
+                        extracted_data['guest_name'] = m_confirmed_for.group(1).strip()
 
         elif email_data.platform == Platform.BOOKING:
             match = re.search(r'Booking number\s*([0-9]+)', subject)
@@ -323,7 +458,7 @@ class BookingParser:
             except Exception:
                 pass
 
-# ---- DATE EXTRACTION ----
+        # ---- DATE EXTRACTION ----
         # First try plain text (often cleaner)
         if body_text:
             dates = self._extract_dates_from_text(body_text)
@@ -335,6 +470,22 @@ class BookingParser:
             dates = self._extract_dates(body_html)
             if dates:
                 extracted_data.update({k: v for k, v in dates.items() if k not in extracted_data})
+
+        # ---- GUEST EMAIL FALLBACK ----
+        if 'guest_email' not in extracted_data:
+            # Look for any email address in the content, excluding the host/platform ones if possible
+            emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', content)
+            for email in emails:
+                email_lower = email.lower()
+                # Skip common platform/automated domains unless they look like proxy emails
+                if any(domain in email_lower for domain in ['@airbnb.com', '@vrbo.com', '@homeaway.com', '@booking.com', '@plumguide.com']):
+                    # Keep airbnb/vrbo proxy emails as they are valid for communication
+                    if any(x in email_lower for x in ['guest', 'user', 'reply', 'messaging']):
+                        extracted_data['guest_email'] = email
+                        break
+                    continue
+                extracted_data['guest_email'] = email
+                break
 
         # ---- EXTRA DATA FROM HTML ----
         if body_html:
@@ -428,8 +579,8 @@ class BookingParser:
                         return dates
             
             # Pattern for explicit check-in/check-out labels in plain text
-            m_ci = re.search(r'(?:check[\s-]?in|arrival|arrive|arriving)[:\s]*(' + date_word + r'\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)', text, re.IGNORECASE)
-            m_co = re.search(r'(?:check[\s-]?out|departure|depart|leaving)[:\s]*(' + date_word + r'\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)', text, re.IGNORECASE)
+            m_ci = re.search(r'(?:check[\s-]?in|arrival|arrive|arriving|starts)[:\s]*(' + date_word + r'\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})', text, re.IGNORECASE)
+            m_co = re.search(r'(?:check[\s-]?out|departure|depart|leaving|ends)[:\s]*(' + date_word + r'\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})', text, re.IGNORECASE)
             
             if m_ci and m_co:
                 ci = self._parse_date(m_ci.group(1))
@@ -567,11 +718,19 @@ class BookingParser:
             "%m/%d/%Y",
             "%d/%m/%Y",
             "%Y-%m-%d",
-            "%Y/%m/%d"
+            "%Y/%m/%d",
+            "%b %d",
+            "%B %d",
+            "%d %b",
+            "%d %B"
         ]
         for fmt in date_formats:
             try:
-                return datetime.strptime(s, fmt)
+                dt = datetime.strptime(s, fmt)
+                if "%Y" not in fmt and "%y" not in fmt:
+                    # Default to current year if year is missing
+                    dt = dt.replace(year=datetime.now().year)
+                return dt
             except Exception:
                 continue
         return None

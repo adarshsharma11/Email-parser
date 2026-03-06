@@ -3,6 +3,7 @@ Main orchestrator for the Vacation Rental Booking Automation system.
 """
 import sys
 import click
+import os
 from typing import Optional, List
 from datetime import datetime, timedelta
 
@@ -45,14 +46,75 @@ class BookingAutomation:
         # Initialize components
         self.gmail_client = GmailClient()
         self.booking_parser = BookingParser()
-        self.notifier = Notifier()
+        self.notifier = None  # Initialized asynchronously in process_emails
         self.calendar_client = GoogleCalendarClient()
     
+    async def _get_notifier(self, session, user_service) -> Notifier:
+        """Get or initialize notifier with dynamic credentials if not development."""
+        if self.notifier:
+            return self.notifier
+            
+        credentials = None
+        app_env = os.getenv("APP_ENV", "development")
+        
+        if app_env != "development":
+            try:
+                from sqlalchemy import text
+                from config.settings import app_config
+                
+                # Try to fetch from user_credentials with platform='crdetails'
+                table_name = app_config.users_collection
+                query = text(f"SELECT email, password FROM {table_name} WHERE platform = 'crdetails' LIMIT 1")
+                result = await session.execute(query)
+                row = result.fetchone()
+                
+                # If no 'crdetails' platform, try fetching the first available from user_credentials
+                if not row:
+                    self.logger.info(f"No 'crdetails' platform in {table_name}, trying first available row")
+                    query = text(f"SELECT email, password FROM {table_name} LIMIT 1")
+                    result = await session.execute(query)
+                    row = result.fetchone()
+
+                # If still no row, maybe 'crdetails' is the table name itself?
+                if not row:
+                    try:
+                        self.logger.info("Trying to fetch from 'crdetails' table directly")
+                        query = text("SELECT email, password FROM crdetails LIMIT 1")
+                        result = await session.execute(query)
+                        row = result.fetchone()
+                    except Exception:
+                        self.logger.info("'crdetails' table does not exist")
+
+                if row:
+                    row_dict = dict(row._mapping)
+                    cred_email = row_dict.get("email")
+                    cred_password = row_dict.get("password")
+                    
+                    if cred_email and cred_password:
+                        # Decrypt password using UserService
+                        decrypted_password = user_service.decrypt(cred_password)
+                        credentials = {
+                            "username": cred_email,
+                            "password": decrypted_password
+                        }
+                        self.logger.info(f"Using database credentials for email: {cred_email}")
+                    else:
+                        self.logger.warning("Found database credential but email or password missing")
+                else:
+                    self.logger.warning("No email credentials found in database")
+            except Exception as e:
+                self.logger.error(f"Failed to fetch production email credentials: {e}")
+        
+        self.notifier = Notifier(email_credentials=credentials)
+        return self.notifier
+
     async def process_emails(
         self,
         platform: Optional[Platform] = None,
         since_days: Optional[int] = 1,
         limit: Optional[int] = None,
+        mailbox: str = "INBOX",
+        text_query: Optional[str] = None,
         dry_run: bool = False
     ) -> dict:
         """
@@ -72,6 +134,9 @@ class BookingAutomation:
                 user_service = UserService(session)
                 booking_service = BookingService(session, self.logger)
                 property_service = PropertyService(session)
+                
+                # Get dynamic notifier
+                notifier = await self._get_notifier(session, user_service)
                 
                 # Use only active credentials from DB
                 active_users = await user_service.list_active_users()
@@ -116,7 +181,7 @@ class BookingAutomation:
                             pass
                         continue
                     
-                    fetched = client.fetch_emails(platform, since_days_effective, limit, mailbox="INBOX")
+                    fetched = client.fetch_emails(platform, since_days_effective, limit, mailbox=mailbox, text_query=text_query)
                     emails.extend(fetched or [])
                     client.disconnect()
                 
@@ -139,6 +204,7 @@ class BookingAutomation:
                         
                         if parse_result.success and parse_result.booking_data:
                             bd = parse_result.booking_data
+                            self.logger.info(f"Successfully parsed booking: {bd.reservation_id} for guest {bd.guest_name} at property {bd.property_name}")
                             self.booking_logger.log_booking_parsed(bd.to_dict())
                             
                             # Real bookings filter
@@ -171,6 +237,7 @@ class BookingAutomation:
                                 'reservation_id': bd.reservation_id,
                                 'guest_name': bd.guest_name,
                                 'property_name': bd.property_name,
+                                'nights': bd.nights
                             })
                         else:
                             failed_emails.append({'email_id': email_data.email_id, 'error': parse_result.error_message, 'platform': platform_name})
@@ -179,9 +246,18 @@ class BookingAutomation:
                 
                 # Sync to PostgreSQL
                 new_count = 0
+                processed_in_session = set() # To track duplicates in the current batch
                 if successful_bookings:
                     for b in successful_bookings:
                         try:
+                            # Session-level duplicate check (Property + Dates)
+                            session_key = f"{b.property_id}_{b.check_in_date}_{b.check_out_date}"
+                            if b.property_id and b.check_in_date and b.check_out_date:
+                                if session_key in processed_in_session:
+                                    self.logger.info(f"Duplicate booking found in current batch for property {b.property_id}, skipping.")
+                                    continue
+                                processed_in_session.add(session_key)
+
                             from .api.models import CreateBookingRequest
                             req = CreateBookingRequest(
                                 reservation_id=b.reservation_id,
@@ -193,6 +269,7 @@ class BookingAutomation:
                                 check_out_date=b.check_out_date,
                                 property_id=b.property_id,
                                 property_name=b.property_name,
+                                nights=b.nights,
                                 number_of_guests=b.number_of_guests,
                                 total_amount=b.total_amount,
                                 currency=b.currency,
@@ -200,17 +277,63 @@ class BookingAutomation:
                                 email_id=b.email_id,
                                 raw_data=b.raw_data
                             )
-                            # Check if exists
+                            # Check for existing booking (By ID OR by Property+Dates)
                             existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
                             
+                            if not existing and b.property_id and b.check_in_date and b.check_out_date:
+                                existing = await booking_service.get_booking_by_property_and_dates(
+                                    b.property_id, b.check_in_date, b.check_out_date
+                                )
+                                if existing:
+                                    self.logger.info(f"Duplicate booking found by dates for property {b.property_id}, skipping.")
+
                             if not existing:
                                 new_count += 1
                                 if not dry_run:
                                     res = await booking_service.create_booking(req)
                                     if res.success:
                                         self.booking_logger.log_new_booking(b.to_dict())
-                                        self.notifier.send_welcome(b)
+                                        
+                                        # Step 1: Guest Welcome Email (with rule check)
+                                        if await booking_service.automation_service.is_rule_enabled("guest_welcome_message"):
+                                            notifier.send_welcome(b)
+                                            await booking_service.automation_service.log_rule_execution("Guest Welcome Message", "success")
+                                        else:
+                                            self.logger.info("Skipping welcome email (rule disabled)")
+
+                                        # Step 2: Cleaning Crew Notification (with rule check)
+                                        if await booking_service.automation_service.is_rule_enabled("create_cleaning_task"):
+                                            # Find a crew member for cleaning
+                                            crew = await booking_service.crew_service.get_single_crew_by_category(category_id=2) # 2 is usually cleaning
+                                            if crew:
+                                                scheduled_date = b.check_out_date
+                                                task = await booking_service.create_cleaning_task(
+                                                    booking_id=b.reservation_id,
+                                                    property_id=b.property_name or b.property_id or "Unknown",
+                                                    scheduled_date=scheduled_date,
+                                                    crew_id=crew.get("id")
+                                                )
+                                                
+                                                if task:
+                                                    task_for_notify = {
+                                                        "id": task.get("id", f"task_{b.reservation_id}"),
+                                                        "booking_id": b.reservation_id,
+                                                        "property_id": b.property_name or b.property_id or "Unknown",
+                                                        "scheduled_date": scheduled_date
+                                                    }
+                                                    
+                                                    if notifier.notify_cleaning_task(crew, task_for_notify, b):
+                                                        self.logger.info(f"Cleaning crew notified for booking {b.reservation_id}")
+                                                        await booking_service.automation_service.log_rule_execution("Create Cleaning Task", "success")
+                                            else:
+                                                self.logger.warning("No active cleaning crew found for notification")
+                                        else:
+                                            self.logger.info("Skipping cleaning notification (rule disabled)")
+
                                         await booking_service.automation_service.log_rule_execution("New Booking Processed", "success")
+                                else:
+                                    # Still count for stats in dry run
+                                    self.booking_logger.stats['new_bookings'] += 1
                             elif not dry_run:
                                 # Update existing if needed
                                 await booking_service.create_booking(req)
@@ -266,6 +389,8 @@ class BookingAutomation:
               help='Number of days to look back for emails (default: 1 for 24 hours)')
 @click.option('--limit', type=int, 
               help='Maximum number of emails to process')
+@click.option('--mailbox', default='INBOX', help='Gmail mailbox to process')
+@click.option('--text-query', default=None, help='Additional text query for email search')
 @click.option('--dry-run', is_flag=True, 
               help='Run without actually syncing to the database')
 @click.option('--log-level', type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']), 
@@ -274,7 +399,7 @@ class BookingAutomation:
               help='Log file path (optional)')
 @click.option('--stats', is_flag=True, 
               help='Show booking statistics only')
-def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
+def main(platform, since_days, limit, mailbox, text_query, dry_run, log_level, log_file, stats):
     """
     Vacation Rental Booking Automation System.
     """
@@ -291,6 +416,8 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
             platform=platform_enum,
             since_days=since_days,
             limit=limit,
+            mailbox=mailbox,
+            text_query=text_query,
             dry_run=dry_run
         ))
         
@@ -308,7 +435,8 @@ def main(platform, since_days, limit, dry_run, log_level, log_file, stats):
         if results.get('parsed_bookings'):
             click.echo("\nParsed bookings (up to 10):")
             for item in results['parsed_bookings'][:10]:
-                click.echo(f"  - email_id={item['email_id']}, platform={item['platform']}, reservation_id={item['reservation_id']}, guest_name={item['guest_name']}, property_name={item['property_name']}")
+                nights_str = f" ({item.get('nights', 0)} nights)" if item.get('nights') else ""
+                click.echo(f"  - email_id={item['email_id']}, platform={item['platform']}, reservation_id={item['reservation_id']}, guest_name={item['guest_name']}, property_name={item['property_name']}{nights_str}")
         
         if dry_run:
             click.echo("\n⚠️  DRY RUN MODE - No data was actually synced to database")

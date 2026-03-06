@@ -32,14 +32,29 @@ class Notifier:
                 f"Checkout {booking.check_out_date}. Visit our site for details."
             )
 
+            email_sent = False
             if booking.guest_email:
-                self.email.send(to=booking.guest_email, subject=subject, body=email_body, credentials=self.email_credentials)
+                try:
+                    self.email.send(to=booking.guest_email, subject=subject, body=email_body, credentials=self.email_credentials)
+                    email_sent = True
+                    self.logger.info("welcome_email_sent", reservation_id=booking.reservation_id, email=booking.guest_email)
+                except Exception as e:
+                    self.logger.error("welcome_email_failed", error=str(e), reservation_id=booking.reservation_id)
+            else:
+                self.logger.warning("welcome_email_skipped_no_email", reservation_id=booking.reservation_id)
 
+            sms_sent = False
             if booking.guest_phone:
-                self.sms.send(to=booking.guest_phone, body=sms_body)
+                try:
+                    self.sms.send(to=booking.guest_phone, body=sms_body)
+                    sms_sent = True
+                    self.logger.info("welcome_sms_sent", reservation_id=booking.reservation_id, phone=booking.guest_phone)
+                except Exception as e:
+                    self.logger.error("welcome_sms_failed", error=str(e), reservation_id=booking.reservation_id)
+            else:
+                self.logger.warning("welcome_sms_skipped_no_phone", reservation_id=booking.reservation_id)
 
-            self.logger.info("welcome_sent", reservation_id=booking.reservation_id)
-            return True
+            return email_sent or sms_sent
         except Exception as e:
             self.logger.error("welcome_failed", error=str(e), reservation_id=booking.reservation_id)
             return False
