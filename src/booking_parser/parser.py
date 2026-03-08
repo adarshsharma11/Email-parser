@@ -71,6 +71,8 @@ class BookingParser:
                 'guest_email': [r'(?:Email|Guest\s+Email)[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
                 'number_of_guests': [r'(?:Number\s*of\s*)?Guests?[:\s]*(\d+)'],
                 'total_amount': [
+                    r'(?i)Total\s+\(USD\)\s+[\r\n]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)You\s+earn\s+[\r\n]*\$?([0-9,]+\.?[0-9]*)',
                     r'(?i)(?:Total|Amount|Paid|Payout|Earned|Price)[:\s]*\$?([0-9,]+\.?[0-9]*)',
                     r'(?i)Guest\s+paid[:\s]*\$?([0-9,]+\.?[0-9]*)',
                     r'(?i)Total\s+payout[:\s]*\$?([0-9,]+\.?[0-9]*)',
@@ -349,13 +351,14 @@ class BookingParser:
                 r'\bat\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
                 r'\bReservation\s+for\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
                 r'\bConfirmed[:\s]+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
-                r'\bconfirmed\s*-\s*.*?\s+arrives\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)', # For "Reservation confirmed - Karin Johnston arrives Aug 29 at [Property]"
             ]
             
             # Guest name from subject (Airbnb specific)
             m_guest_subj = re.search(r'Reservation\s+confirmed\s+-\s+([A-Z][a-zA-Z\s\'\-]{1,40})\s+arrives', subject, re.IGNORECASE)
             if m_guest_subj and 'guest_name' not in extracted_data:
                 extracted_data['guest_name'] = m_guest_subj.group(1).strip()
+                # Explicitly flag as confirmed since this pattern only appears in confirmations
+                extracted_data["booking_type"] = "booking"
             
             for p in subject_prop_patterns:
                 m = re.search(p, clean_subject, re.IGNORECASE)
@@ -401,8 +404,14 @@ class BookingParser:
             
             # Guest name extraction (Airbnb specific)
             if not extracted_data.get('guest_name'):
-                # Pattern for "ZHEJUN Booker" or "ZHEJUN Altman"
-                m_booker = re.search(r'\b([A-Z][a-zA-Z\'\-]{1,})\s+(?:Booker|Altman)\b', content)
+                # Pattern for "Karin arrives Aug 29"
+                m_arrives = re.search(r'([A-Z][a-zA-Z\s\'\-]{1,40})\s+arrives\s+[A-Z][a-z]{2}\s+\d+', content)
+                if m_arrives:
+                    extracted_data['guest_name'] = m_arrives.group(1).strip()
+                
+                if not extracted_data.get('guest_name'):
+                    # Pattern for "ZHEJUN Booker" or "ZHEJUN Altman"
+                    m_booker = re.search(r'\b([A-Z][a-zA-Z\'\-]{1,})\s+(?:Booker|Altman)\b', content)
                 if m_booker:
                     extracted_data['guest_name'] = m_booker.group(1).strip()
                 

@@ -12,7 +12,8 @@ from sqlalchemy import text, select, func, and_, or_
 
 from ..models import (
     BookingSummary, BookingStatsResponse, ErrorResponse, 
-    CreateBookingRequest, CreateBookingResponse, BookingStatus
+    CreateBookingRequest, CreateBookingResponse, BookingStatus,
+    SendWelcomeEmailRequest, APIResponse
 )
 from ..config import settings
 from config.settings import app_config
@@ -443,6 +444,59 @@ class BookingService:
         except Exception as e:
             self.logger.error(f"Error fetching stats: {e}")
             raise
+
+    async def send_welcome_email(self, request: SendWelcomeEmailRequest) -> APIResponse:
+        """Send a manual welcome email and update the booking record."""
+        try:
+            self.logger.info("Sending manual welcome email", reservation_id=request.reservation_id, email=request.guest_email)
+            
+            # 1. Fetch the booking
+            query = text("SELECT * FROM bookings WHERE reservation_id = :rid")
+            result = await self.session.execute(query, {"rid": request.reservation_id})
+            row = result.fetchone()
+            
+            if not row:
+                return APIResponse(success=False, message=f"Booking {request.reservation_id} not found")
+            
+            booking_dict = dict(row._mapping)
+            
+            # 2. Update the email in database
+            update_query = text("""
+                UPDATE bookings 
+                SET guest_email = :email, updated_at = NOW() 
+                WHERE reservation_id = :rid
+            """)
+            await self.session.execute(update_query, {"email": request.guest_email, "rid": request.reservation_id})
+            
+            # 3. Trigger notification
+            # Convert dict to BookingData model for the notifier
+            booking_data = BookingData(
+                reservation_id=booking_dict['reservation_id'],
+                platform=Platform(booking_dict['platform']),
+                guest_name=booking_dict.get('guest_name') or 'Guest',
+                guest_email=request.guest_email, # Use the new email
+                guest_phone=booking_dict.get('guest_phone'),
+                check_in_date=booking_dict.get('check_in_date'),
+                check_out_date=booking_dict.get('check_out_date'),
+                property_name=booking_dict.get('property_name') or 'Your Property',
+                total_amount=booking_dict.get('total_amount'),
+                booking_date=booking_dict.get('booking_date'),
+                email_id=booking_dict.get('email_id')
+            )
+            
+            notifier = await self._get_notifier()
+            success = notifier.send_welcome(booking_data)
+            
+            if success:
+                # Log execution in automation history
+                await self.automation_service.log_rule_execution("Manual Welcome Email", "success")
+                return APIResponse(success=True, message=f"Welcome email sent successfully to {request.guest_email}")
+            else:
+                return APIResponse(success=False, message="Failed to send email via SendGrid")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to send manual welcome email: {e}", exc_info=True)
+            return APIResponse(success=False, message=f"Error: {str(e)}")
 
     async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:

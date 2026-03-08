@@ -6,7 +6,11 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse
+from ..models import (
+    BookingStatsResponse, ErrorResponse, Platform, BookingSummary, 
+    PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse,
+    SendWelcomeEmailRequest, APIResponse
+)
 from ..dependencies import get_booking_service
 from ..services.booking_service import BookingService
 
@@ -181,6 +185,32 @@ async def get_booking_stats(
         
 class UpdateGuestPhoneRequest(BaseModel):
     guest_phone: str = Field(..., min_length=1, description="Updated guest phone number")
+
+
+@router.post(
+    "/send-welcome",
+    response_model=APIResponse,
+    summary="Send manual welcome email",
+    description="Update guest email and send a welcome email via SendGrid",
+    responses={
+        200: {"description": "Email sent successfully"},
+        404: {"description": "Booking not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def send_manual_welcome_email(
+    request: SendWelcomeEmailRequest,
+    booking_service: BookingService = Depends(get_booking_service)
+):
+    """
+    Send a manual welcome email to a guest and update their record.
+    """
+    response = await booking_service.send_welcome_email(request)
+    if not response.success:
+        if "not found" in response.message:
+            raise HTTPException(status_code=404, detail=response.message)
+        raise HTTPException(status_code=500, detail=response.message)
+    return response
 
 
 @router.patch(

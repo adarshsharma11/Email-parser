@@ -98,7 +98,15 @@ class CreateCrewRequest(BaseModel):
 
 class CreateCrewResponse(APIResponse):
     """Response model for creating a crew member."""
-    data: Dict[str, Any] = Field(..., description="Created crew member data")
+    data: Optional[Dict[str, Any]] = Field(None, description="Created crew member data")
+
+
+class SendWelcomeEmailRequest(BaseModel):
+    """Request model for sending a manual welcome email."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    reservation_id: str = Field(..., description="The booking reservation ID")
+    guest_email: str = Field(..., description="The guest email address to send to and update")
 
 
 class BookingServiceItem(BaseModel):

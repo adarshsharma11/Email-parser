@@ -48,10 +48,8 @@ class EmailTemplates:
                     </div>
 
                     <p>If you have any questions before your arrival, please don't hesitate to reach out. We want to ensure your stay is absolutely perfect!</p>
+                    <p>Contact us on effi@fireflymedia.com!</p>
                     
-                    <center>
-                        <a href="https://our-website.com/bookings/{reservation_id}" class="btn">View Trip Details</a>
-                    </center>
                 </div>
                 <div class="footer">
                     <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>
