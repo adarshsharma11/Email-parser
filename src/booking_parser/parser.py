@@ -349,7 +349,13 @@ class BookingParser:
                 r'\bat\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
                 r'\bReservation\s+for\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
                 r'\bConfirmed[:\s]+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)',
+                r'\bconfirmed\s*-\s*.*?\s+arrives\s+([^,—–\-]+?)(?:\s*[,—–\-]|for|from|$)', # For "Reservation confirmed - Karin Johnston arrives Aug 29 at [Property]"
             ]
+            
+            # Guest name from subject (Airbnb specific)
+            m_guest_subj = re.search(r'Reservation\s+confirmed\s+-\s+([A-Z][a-zA-Z\s\'\-]{1,40})\s+arrives', subject, re.IGNORECASE)
+            if m_guest_subj and 'guest_name' not in extracted_data:
+                extracted_data['guest_name'] = m_guest_subj.group(1).strip()
             
             for p in subject_prop_patterns:
                 m = re.search(p, clean_subject, re.IGNORECASE)

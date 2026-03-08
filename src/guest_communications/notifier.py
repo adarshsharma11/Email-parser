@@ -1,6 +1,7 @@
 # guest_communication/notifier.py
 from .sms_client import SMSClient
-from .email_client import EmailClient
+from .sendgrid_client import SendGridClient
+from .email_templates import EmailTemplates
 from ..utils.logger import get_logger
 from ..utils.models import BookingData
 import os
@@ -8,23 +9,23 @@ import os
 class Notifier:
     def __init__(self, email_credentials: dict = None):
         self.sms = SMSClient()
-        self.email = EmailClient()
+        self.email = SendGridClient()
         self.logger = get_logger("notifier")
         self.email_credentials = email_credentials
 
     def send_welcome(self, booking: BookingData) -> bool:
         """Send both email and SMS welcome messages."""
         try:
-            subject = f"Booking Confirmation - {booking.property_name}"
-            email_body = f"""
-            Hi {booking.guest_name},
-
-            Your booking at {booking.property_name} is confirmed!
-            Check-in: {booking.check_in_date}
-            Check-out: {booking.check_out_date}
-
-            See more at: https://our-website.com/bookings/{booking.reservation_id}
-            """
+            subject = f"Your Booking is Confirmed! 🏠 {booking.property_name}"
+            
+            # Use beautiful SendGrid template
+            email_body = EmailTemplates.get_welcome_template(
+                guest_name=booking.guest_name,
+                property_name=booking.property_name or "Your Property",
+                check_in=str(booking.check_in_date),
+                check_out=str(booking.check_out_date),
+                reservation_id=booking.reservation_id
+            )
 
             sms_body = (
                 f"Hi {booking.guest_name}, your booking at {booking.property_name} "
@@ -35,7 +36,8 @@ class Notifier:
             email_sent = False
             if booking.guest_email:
                 try:
-                    self.email.send(to=booking.guest_email, subject=subject, body=email_body, credentials=self.email_credentials)
+                    # Using SendGrid client
+                    self.email.send(to=booking.guest_email, subject=subject, body=email_body, html=True)
                     email_sent = True
                     self.logger.info("welcome_email_sent", reservation_id=booking.reservation_id, email=booking.guest_email)
                 except Exception as e:
@@ -117,34 +119,34 @@ class Notifier:
                 try:
                     subject = f"Cleaning Assignment – {task['property_id']} on {task['scheduled_date']}"
                     
-                    guest_details_html = ""
+                    guest_details_str = ""
                     if booking:
-                        guest_details_html = f"""
-                        <b>Guest Details:</b><br/>
-                        Name: {booking.guest_name}<br/>
-                        Phone: {booking.guest_phone or 'N/A'}<br/>
-                        Email: {booking.guest_email or 'N/A'}<br/>
-                        Check-in: {booking.check_in_date}<br/>
-                        Check-out: {booking.check_out_date}<br/><br/>
+                        guest_details_str = f"""
+                        <strong>Guest:</strong> {booking.guest_name}<br/>
+                        <strong>Check-in:</strong> {booking.check_in_date}<br/>
+                        <strong>Check-out:</strong> {booking.check_out_date}<br/>
                         """
 
-                    body = f"Hi {crew_name}<br/><br/>{msg}<br/><br/>{guest_details_html}"
+                    # Using SendGrid template
+                    body = EmailTemplates.get_cleaning_template(
+                        crew_name=crew_name,
+                        property_name=task['property_id'],
+                        scheduled_date=str(task['scheduled_date']),
+                        guest_details=guest_details_str
+                    )
                     
-                    self.logger.info("Sending email to crew", 
+                    self.logger.info("Sending email to crew via SendGrid", 
                                    crew_name=crew_name, 
                                    email=crew_email, 
                                    subject=subject)
-                    self.email.send(to=crew_email, subject=subject, body=body, html=True, credentials=self.email_credentials)
+                    self.email.send(to=crew_email, subject=subject, body=body, html=True)
                     email_success = True
                     self.logger.info("Email sent successfully", crew_name=crew_name, email=crew_email)
                 except Exception as e:
                     self.logger.error("Email failed", 
                                     crew_name=crew_name, 
                                     email=crew_email, 
-                                    error=str(e),
-                                    smtp_server=self.email.smtp_server,
-                                    smtp_port=self.email.smtp_port,
-                                    has_smtp_user=bool(self.email.username))
+                                    error=str(e))
                     email_success = False
 
             # Report overall success
