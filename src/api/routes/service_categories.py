@@ -2,11 +2,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Any, Dict
 from ..services.service_category_service import ServiceCategoryService
+from ..dependencies import get_service_category_service
 
 router = APIRouter(prefix="/service-categories", tags=["service-categories"])
-
-def get_service():
-    return ServiceCategoryService()
 
 class ServiceCategoryCreate(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -35,43 +33,43 @@ class ServiceCategoryResponse(BaseModel):
     data: Any
 
 @router.post("", response_model=ServiceCategoryResponse)
-def create_service_category(
+async def create_service_category(
     data: ServiceCategoryCreate,
-    service: ServiceCategoryService = Depends(get_service)
+    service: ServiceCategoryService = Depends(get_service_category_service)
 ):
     try:
-        result = service.create_category(data.model_dump())
+        result = await service.create_category(data.model_dump())
         return {"success": True, "message": "Service category created", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/{category_id}/status", response_model=ServiceCategoryResponse)
-def update_service_category_status(
-    category_id: str,
+async def update_service_category_status(
+    category_id: int,
     data: ServiceCategoryStatusUpdate,
-    service: ServiceCategoryService = Depends(get_service)
+    service: ServiceCategoryService = Depends(get_service_category_service)
 ):
     try:
-        result = service.update_status(category_id, data.status)
+        result = await service.update_status(category_id, data.status)
         return {"success": True, "message": "Service category status updated", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("", response_model=ServiceCategoryResponse)
-def list_service_categories(service: ServiceCategoryService = Depends(get_service)):
+async def list_service_categories(service: ServiceCategoryService = Depends(get_service_category_service)):
     try:
-        result = service.list_categories()
+        result = await service.list_categories()
         return {"success": True, "message": "Service categories list", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{category_id}", response_model=ServiceCategoryResponse)
-def get_service_category(
-    category_id: str,
-    service: ServiceCategoryService = Depends(get_service)
+async def get_service_category(
+    category_id: int,
+    service: ServiceCategoryService = Depends(get_service_category_service)
 ):
     try:
-        result = service.get_category(category_id)
+        result = await service.get_category(category_id)
         if not result:
             raise HTTPException(status_code=404, detail="Service category not found")
         return {"success": True, "message": "Service category details", "data": result}
@@ -81,27 +79,25 @@ def get_service_category(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{category_id}", response_model=ServiceCategoryResponse)
-def replace_service_category(
-    category_id: str,
+async def replace_service_category(
+    category_id: int,
     data: ServiceCategoryUpdate,
-    service: ServiceCategoryService = Depends(get_service)
+    service: ServiceCategoryService = Depends(get_service_category_service)
 ):
     try:
-        # PUT conceptually replaces, but here we'll map it to update for flexibility
-        # unless strict replacement is required. Using update_category handles both.
-        result = service.update_category(category_id, data.model_dump(exclude_unset=True))
+        result = await service.update_category(category_id, data.model_dump(exclude_unset=True))
         return {"success": True, "message": "Service category updated", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.patch("/{category_id}", response_model=ServiceCategoryResponse)
-def update_service_category(
-    category_id: str,
+async def update_service_category(
+    category_id: int,
     data: ServiceCategoryUpdate,
-    service: ServiceCategoryService = Depends(get_service)
+    service: ServiceCategoryService = Depends(get_service_category_service)
 ):
     try:
-        result = service.update_category(category_id, data.model_dump(exclude_unset=True))
+        result = await service.update_category(category_id, data.model_dump(exclude_unset=True))
         return {"success": True, "message": "Service category updated", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,11 +1,12 @@
 """
-Crew service for handling crew-related business logic.
+Crew service for handling crew-related business logic using PostgreSQL.
 """
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import time
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
-from ...supabase_sync.supabase_client import SupabaseClient
 from ..config import settings
 from config.settings import app_config
 
@@ -13,242 +14,91 @@ from config.settings import app_config
 class CrewService:
     """Service for managing crew operations."""
     
-    def __init__(self):
-        """Initialize crew service with Supabase client."""
-        self.supabase_client = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
         self._cache = {}
         self._cache_ttl = settings.cache_ttl_seconds
     
-    def _get_cache_key(self, property_id: Optional[str] = None) -> str:
-        """Generate cache key for crew list."""
-        return f"crews_{property_id or 'all'}"
-    
-    def _is_cache_valid(self, cache_key: str) -> bool:
-        """Check if cache is still valid."""
-        if cache_key not in self._cache:
-            return False
-        
-        timestamp, _ = self._cache[cache_key]
-        return (time.time() - timestamp) < self._cache_ttl
-    
-    def get_single_crew_by_category(self, category_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get a single active crew member by category ID (global - ignores property_id).
-        
-        Args:
-            category_id: Category ID to filter by
-            
-        Returns:
-            Single crew member with contact info or None if not found
-        """
-        # Fetch from Supabase
-        crew = self.supabase_client.get_single_crew_by_category(category_id)
-        
-        # Enrich with category details
-        if crew and isinstance(crew, dict) and crew.get("category_id"):
-            try:
-                res = (
-                    self.supabase_client.client
-                    .table(app_config.categories_collection)
-                    .select("id,name,parent_id,email,phone")
-                    .eq("id", crew.get("category_id"))
-                    .execute()
-                )
-                if hasattr(res, "data") and res.data:
-                    crew["category"] = res.data[0]
-            except Exception:
-                pass
-        
-        # Validate that crew has necessary contact information for notifications
-        if crew and isinstance(crew, dict):
-            email = crew.get("email")
-            phone = crew.get("phone")
-            if not email or not phone:
-                self.logger.warning(
-                    "Crew found but missing notification contact info",
-                    crew_id=crew.get("id"),
-                    email=email,
-                    phone=phone,
-                    has_email=bool(email),
-                    has_phone=bool(phone)
-                )
-        
-        return crew
-
-    def get_active_crews(self, property_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        Get active cleaning crews, optionally filtered by property.
-        
-        Args:
-            property_id: Optional property ID to filter crews
-            
-        Returns:
-            List of active crew members
-        """
-        cache_key = self._get_cache_key(property_id)
-        
-        # Check cache first
-        if self._is_cache_valid(cache_key):
-            _, crews = self._cache[cache_key]
-            return crews
-        
-        # Fetch from Supabase
-        crews = self.supabase_client.list_active_crews(property_id)
-        
-        # Enrich with category details
+    async def get_single_crew_by_category(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single active crew member by category ID."""
         try:
-            cat_ids = sorted({c.get("category_id") for c in crews if isinstance(c, dict) and c.get("category_id") is not None})
-            if cat_ids:
-                res = (
-                    self.supabase_client.client
-                    .table(app_config.categories_collection)
-                    .select("id,name,parent_id")
-                    .in_("id", cat_ids)
-                    .execute()
-                )
-                cat_map = {row.get("id"): row for row in (getattr(res, "data", []) or [])}
-                for c in crews:
-                    cid = c.get("category_id")
-                    if cid is not None:
-                        c["category"] = cat_map.get(cid)
+            query = text(f"""
+                SELECT id, name, email, phone, category_id, active, property_id 
+                FROM {app_config.cleaning_crews_collection} 
+                WHERE active = True AND category_id = :cat_id 
+                LIMIT 1
+            """)
+            result = await self.session.execute(query, {"cat_id": category_id})
+            row = result.fetchone()
+            
+            if row:
+                crew = dict(row._mapping)
+                # Enrich with category
+                cat_query = text(f"SELECT id, name, parent_id FROM {app_config.categories_collection} WHERE id = :id")
+                cat_result = await self.session.execute(cat_query, {"id": crew["category_id"]})
+                cat_row = cat_result.fetchone()
+                if cat_row:
+                    crew["category"] = dict(cat_row._mapping)
+                return crew
+            return None
+        except Exception as e:
+            # Handle error
+            return None
+
+    async def get_active_crews(self, property_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        try:
+            query_str = f"SELECT * FROM {app_config.cleaning_crews_collection} WHERE active = True"
+            params = {}
+            if property_id:
+                query_str += " AND property_id = :pid"
+                params["pid"] = property_id
+            
+            result = await self.session.execute(text(query_str), params)
+            rows = result.fetchall()
+            crews = [dict(row._mapping) for row in rows]
+            
+            # Enrich with categories
+            for crew in crews:
+                if crew.get("category_id"):
+                    cat_query = text(f"SELECT * FROM {app_config.categories_collection} WHERE id = :id")
+                    cat_res = await self.session.execute(cat_query, {"id": crew["category_id"]})
+                    cat_row = cat_res.fetchone()
+                    if cat_row:
+                        crew["category"] = dict(cat_row._mapping)
+            
+            return crews
         except Exception:
-            pass
-        
-        # Cache the result
-        self._cache[cache_key] = (time.time(), crews)
-        
-        return crews
-    
-    def add_crew(self, crew_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Add a new crew member to the system.
-        
-        Args:
-            crew_data: Crew member data including name, email, phone, role, etc.
+            return []
+
+    async def update_crew(self, crew_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            updates["updated_at"] = datetime.utcnow()
+            set_clause = ", ".join([f"{k} = :{k}" for k in updates.keys()])
+            query = text(f"UPDATE {app_config.cleaning_crews_collection} SET {set_clause} WHERE id = :id RETURNING *")
+            params = {**updates, "id": crew_id}
+            result = await self.session.execute(query, params)
+            row = result.fetchone()
+            if not row:
+                raise Exception("Crew not found")
+            return dict(row._mapping)
+        except Exception as e:
+            raise e
             
-        Returns:
-            Created crew member data
-            
-        Raises:
-            Exception: If creation fails or duplicate email/phone found
-        """
-        # Ensure client is initialized
-        if not self.supabase_client.initialized:
-            if not self.supabase_client.initialize():
-                raise Exception("Failed to initialize Supabase client")
-        
-        # Check for duplicate email or phone
-        email = crew_data.get('email')
-        phone = crew_data.get('phone')
-        
-        if email or phone:
-            # Query for existing crew members with same email or phone
-            query = (
-                self.supabase_client.client
-                .table(app_config.cleaning_crews_collection)
-                .select('id', 'email', 'phone')
-            )
-            
-            if email and phone:
-                query = query.or_(f'email.eq.{email},phone.eq.{phone}')
-            elif email:
-                query = query.eq('email', email)
-            elif phone:
-                query = query.eq('phone', phone)
-            
-            existing_result = query.execute()
-            
-            if existing_result.data:
-                existing = existing_result.data[0]
-                if email and existing.get('email') == email:
-                    raise Exception(f"A crew member with email '{email}' already exists")
-                if phone and existing.get('phone') == phone:
-                    raise Exception(f"A crew member with phone '{phone}' already exists")
-        
-        # Add timestamp
-        crew_data["created_at"] = datetime.utcnow().isoformat()
-        crew_data["updated_at"] = datetime.utcnow().isoformat()
-        
-        # Filter out None values to avoid database schema conflicts
-        filtered_data = {k: v for k, v in crew_data.items() if v is not None}
-        
-        # Create crew member in Supabase
-        result = (
-            self.supabase_client.client
-            .table(app_config.cleaning_crews_collection)
-            .insert(filtered_data)
-            .execute()
-        )
-        
-        # Clear cache since we added a new crew member
-        self._cache.clear()
-        
-        if result.data:
-            return result.data[0]
-        else:
-            raise Exception("Failed to create crew member")
-    
-    def update_crew(self, crew_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update an existing crew member.
-        """
-        # Ensure client is initialized
-        if not self.supabase_client.initialized:
-            if not self.supabase_client.initialize():
-                raise Exception("Failed to initialize Supabase client")
-        
-        # Update timestamp
-        update_data["updated_at"] = datetime.utcnow().isoformat()
-        filtered = {k: v for k, v in update_data.items() if v is not None}
-        
-        # Perform update
-        result = (
-            self.supabase_client.client
-            .table(app_config.cleaning_crews_collection)
-            .update(filtered)
-            .eq("id", crew_id)
-            .execute()
-        )
-        
-        # Clear cache since data changed
-        self._cache.clear()
-        
-        if result.data:
-            return result.data[0]
-        else:
-            raise Exception(f"Crew member with ID {crew_id} not found")
-    
-    def delete_crew(self, crew_id: str) -> bool:
-        """
-        Delete a crew member from the system.
-        
-        Args:
-            crew_id: ID of the crew member to delete
-            
-        Returns:
-            True if deletion was successful
-            
-        Raises:
-            Exception: If deletion fails
-        """
-        # Ensure client is initialized
-        if not self.supabase_client.initialized:
-            if not self.supabase_client.initialize():
-                raise Exception("Failed to initialize Supabase client")
-        
-        # Delete crew member from Supabase
-        result = (
-            self.supabase_client.client
-            .table(app_config.cleaning_crews_collection)
-            .delete()
-            .eq("id", crew_id)
-            .execute()
-        )
-        
-        # Clear cache since we deleted a crew member
-        self._cache.clear()
-        
-        if result.data:
+    async def create_crew(self, crew_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            columns = ", ".join(crew_data.keys())
+            placeholders = ", ".join([f":{k}" for k in crew_data.keys()])
+            query = text(f"INSERT INTO {app_config.cleaning_crews_collection} ({columns}) VALUES ({placeholders}) RETURNING *")
+            result = await self.session.execute(query, crew_data)
+            row = result.fetchone()
+            return dict(row._mapping)
+        except Exception as e:
+            raise e
+
+    async def delete_crew(self, crew_id: int) -> bool:
+        try:
+            query = text(f"DELETE FROM {app_config.cleaning_crews_collection} WHERE id = :id")
+            await self.session.execute(query, {"id": crew_id})
             return True
-        else:
-            raise Exception(f"Crew member with ID {crew_id} not found")
+        except Exception:
+            return False

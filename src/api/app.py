@@ -10,7 +10,7 @@ from datetime import datetime
 import json
 
 from .config import settings
-from .dependencies import get_logger, get_supabase_client, get_booking_service
+from .dependencies import get_logger, get_booking_service, lifespan
 from .routes import bookings, health, crews, ical, users, dashboard, auth, service_categories, activity_rules, automation, emails
 from .routes import categories
 from .models import ErrorResponse
@@ -22,29 +22,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager for startup and shutdown events."""
-    # Startup
-    logger.info("Starting FastAPI application")
-    logger.info(f"Environment: {settings.environment}")
-    logger.info(f"API Version: {settings.api_version}")
-    
-    # Initialize services
-    try:
-        supabase_client = get_supabase_client()
-        booking_service = get_booking_service()
-        logger.info("Services initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize services: {e}")
-        raise
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down FastAPI application")
 
 
 def create_app() -> FastAPI:
@@ -117,6 +94,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             return JSONResponse(status_code=401, content=ErrorResponse(success=False, message="Invalid token", error_code="UNAUTHORIZED", details={"error": str(e)}).dict())
         return await call_next(request)
+
     app.include_router(
         bookings.router,
         prefix=f"{settings.api_prefix}/v1"

@@ -98,7 +98,15 @@ class CreateCrewRequest(BaseModel):
 
 class CreateCrewResponse(APIResponse):
     """Response model for creating a crew member."""
-    data: Dict[str, Any] = Field(..., description="Created crew member data")
+    data: Optional[Dict[str, Any]] = Field(None, description="Created crew member data")
+
+
+class SendWelcomeEmailRequest(BaseModel):
+    """Request model for sending a manual welcome email."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    reservation_id: str = Field(..., description="The booking reservation ID")
+    guest_email: str = Field(..., description="The guest email address to send to and update")
 
 
 class BookingServiceItem(BaseModel):
@@ -112,13 +120,14 @@ class CreateBookingRequest(BaseModel):
     """Request model for creating a booking with services."""
     reservation_id: str = Field(..., description="Reservation ID")
     platform: Platform = Field(..., description="Booking platform")
-    guest_name: str = Field(..., description="Guest name")
+    guest_name: Optional[str] = Field("Unknown Guest", description="Guest name")
     guest_phone: Optional[str] = Field(None, description="Guest phone number")
     guest_email: Optional[str] = Field(None, description="Guest email")
     check_in_date: datetime = Field(..., description="Check-in date")
     check_out_date: datetime = Field(..., description="Check-out date")
     property_id: Optional[str] = Field(None, description="Property ID")
     property_name: Optional[str] = Field(None, description="Property name")
+    nights: Optional[int] = Field(None, description="Number of nights")
     number_of_guests: Optional[int] = Field(None, description="Number of guests")
     total_amount: Optional[float] = Field(None, description="Total amount")
     currency: Optional[str] = Field(None, description="Currency")

@@ -10,33 +10,26 @@ class AutomationService:
     def __init__(self, activity_rule_service: ActivityRuleService):
         self.activity_rule_service = activity_rule_service
 
-    def is_rule_enabled(self, rule_name: str) -> bool:
+    async def is_rule_enabled(self, rule_name: str) -> bool:
         """Check if a specific rule is enabled."""
-        rule = self.activity_rule_service.get_rule_by_slug(rule_name)
+        rule = await self.activity_rule_service.get_rule_by_slug(rule_name)
         if rule:
             return rule.status if rule.status is not None else False
         return False
 
-    def toggle_rule(self, rule_name: str, enabled: bool) -> Dict[str, bool]:
+    async def toggle_rule(self, rule_name: str, enabled: bool) -> Dict[str, bool]:
         """Toggle a rule on or off."""
         # First find the rule
-        rule = self.activity_rule_service.get_rule_by_slug(rule_name)
+        rule = await self.activity_rule_service.get_rule_by_slug(rule_name)
         if rule:
             # Update existing rule
-            self.activity_rule_service.toggle_status(rule.id, enabled)
-        else:
-            # Optionally create if not exists? For now, we assume rules must exist.
-            # Or we could raise an error.
-            # Given the previous implementation allowed implicit creation, maybe we should create it?
-            # But creating requires more info (priority, etc). 
-            # For now, let's assume it exists or return current state.
-            pass
-            
-        return self.get_all_rules()
+            await self.activity_rule_service.toggle_status(rule.id, enabled)
+        
+        return await self.get_all_rules()
 
-    def get_all_rules(self) -> Dict[str, bool]:
+    async def get_all_rules(self) -> Dict[str, bool]:
         """Get all rules as a simple dict."""
-        rules = self.activity_rule_service.get_rules()
+        rules = await self.activity_rule_service.get_rules()
         # Filter for rules that have a slug_name
         return {
             r.slug_name: (r.status if r.status is not None else False)
@@ -44,10 +37,10 @@ class AutomationService:
             if r.slug_name
         }
 
-    def log_rule_execution(self, rule_name: str, outcome: str):
+    async def log_rule_execution(self, rule_name: str, outcome: str):
         """Log the execution of a rule."""
-        self.activity_rule_service.log_activity(rule_name, outcome)
+        await self.activity_rule_service.log_activity(rule_name, outcome)
 
-    def get_logs(self):
+    async def get_logs(self):
         """Get execution logs."""
-        return self.activity_rule_service.get_logs()
+        return await self.activity_rule_service.get_logs()

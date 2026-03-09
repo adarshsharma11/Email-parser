@@ -1,143 +1,110 @@
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
-from ...supabase_sync.supabase_client import SupabaseClient
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 from config.settings import app_config
 
 
 class CategoryService:
-    """Service for managing hierarchical categories."""
+    """Service for managing hierarchical categories using PostgreSQL."""
 
-    def __init__(self):
-        self.supabase = SupabaseClient()
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
-    def _ensure(self) -> None:
-        if not self.supabase.initialized:
-            if not self.supabase.initialize():
-                raise RuntimeError("Supabase initialization failed")
-
-    def create_category(
+    async def create_category(
         self,
         name: str,
         parent_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Create a category. If parent_id is provided, ensure it exists.
-        Returns inserted category.
-        """
-        self._ensure()
-
+        """Create a category."""
         if parent_id is not None:
-            parent = (
-                self.supabase.client
-                .table(app_config.categories_collection)
-                .select("id")
-                .eq("id", parent_id)
-                .limit(1)
-                .execute()
-            )
-            if not parent.data:
+            parent_query = text(f"SELECT id FROM {app_config.categories_collection} WHERE id = :pid")
+            parent_result = await self.session.execute(parent_query, {"pid": parent_id})
+            if not parent_result.fetchone():
                 raise ValueError("PARENT_NOT_FOUND")
 
         payload = {
             "name": name,
             "parent_id": parent_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
         }
 
-        result = (
-            self.supabase.client
-            .table(app_config.categories_collection)
-            .insert(payload)
-            .execute()
-        )
-
-        data = result.data[0] if result.data else payload
+        columns = ", ".join(payload.keys())
+        placeholders = ", ".join([f":{k}" for k in payload.keys()])
+        query = text(f"INSERT INTO {app_config.categories_collection} ({columns}) VALUES ({placeholders}) RETURNING *")
+        
+        result = await self.session.execute(query, payload)
+        row = result.fetchone()
+        
+        if not row:
+            raise Exception("Failed to create category")
+            
+        data = dict(row._mapping)
         return {
             "id": data.get("id"),
             "name": data.get("name"),
             "parent_id": data.get("parent_id"),
         }
 
-    def get_category(self, category_id: str) -> Optional[Dict[str, Any]]:
-        self._ensure()
-        result = (
-            self.supabase.client
-            .table(app_config.categories_collection)
-            .select("*")
-            .eq("id", category_id)
-            .limit(1)
-            .execute()
-        )
-        return result.data[0] if result.data else None
+    async def get_category(self, category_id: int) -> Optional[Dict[str, Any]]:
+        query = text(f"SELECT * FROM {app_config.categories_collection} WHERE id = :id")
+        result = await self.session.execute(query, {"id": int(category_id)})
+        row = result.fetchone()
+        return dict(row._mapping) if row else None
 
-    def list_children(
+    async def list_children(
         self,
         parent_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        List children under a given parent_id; if None, list root categories.
-        """
-        self._ensure()
-        query = (
-            self.supabase.client
-            .table(app_config.categories_collection)
-            .select("id,name,parent_id")
-        )
         if parent_id is None:
-            query = query.is_("parent_id", None)
+            query = text(f"SELECT id, name, parent_id FROM {app_config.categories_collection} WHERE parent_id IS NULL")
+            result = await self.session.execute(query)
         else:
-            query = query.eq("parent_id", parent_id)
-        result = query.execute()
-        return result.data or []
+            query = text(f"SELECT id, name, parent_id FROM {app_config.categories_collection} WHERE parent_id = :pid")
+            result = await self.session.execute(query, {"pid": parent_id})
+        
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
 
-    def get_category_tree(self) -> List[Dict[str, Any]]:
-        """
-        Get the full category tree with associated crews.
-        """
-        self._ensure()
+    async def get_category_tree(self) -> List[Dict[str, Any]]:
+        """Get the full category tree with associated crews."""
         # Fetch all categories
-        result = (
-            self.supabase.client
-            .table(app_config.categories_collection)
-            .select("id,name,parent_id")
-            .execute()
-        )
-        categories = result.data or []
-
+        query = text(f"SELECT * FROM {app_config.categories_collection}")
+        result = await self.session.execute(query)
+        all_cats = [dict(row._mapping) for row in result.fetchall()]
+        
         # Fetch all crews
-        crews_result = (
-            self.supabase.client
-            .table(app_config.cleaning_crews_collection)
-            .select("*")
-            .execute()
-        )
-        crews = crews_result.data or []
-
-        # Group crews by category
-        crews_by_category = {}
-        for crew in crews:
-            cat_id = crew.get('category_id')
-            if cat_id is not None:
-                if cat_id not in crews_by_category:
-                    crews_by_category[cat_id] = []
-                crews_by_category[cat_id].append(crew)
-
-        # Build tree
-        category_map = {c['id']: {**c, 'children': [], 'crews': []} for c in categories}
+        crew_query = text(f"SELECT * FROM {app_config.cleaning_crews_collection}")
+        crew_result = await self.session.execute(crew_query)
+        all_crews = [dict(row._mapping) for row in crew_result.fetchall()]
+        
+        # Build map: category_id -> list of crews
+        crews_by_cat = {}
+        for crew in all_crews:
+            cid = crew.get("category_id")
+            if cid:
+                if cid not in crews_by_cat:
+                    crews_by_cat[cid] = []
+                crews_by_cat[cid].append(crew)
+        
+        # Build map: parent_id -> list of children
+        children_by_parent = {}
         roots = []
-
-        for cat in categories:
-            cat_id = cat['id']
-            parent_id = cat['parent_id']
-            node = category_map[cat_id]
-
-            # Attach crews
-            node['crews'] = crews_by_category.get(cat_id, [])
-
-            if parent_id is None:
-                roots.append(node)
-            elif parent_id in category_map:
-                category_map[parent_id]['children'].append(node)
-
-        return roots
+        for cat in all_cats:
+            cat["crews"] = crews_by_cat.get(cat["id"], [])
+            pid = cat.get("parent_id")
+            if pid is None:
+                roots.append(cat)
+            else:
+                if pid not in children_by_parent:
+                    children_by_parent[pid] = []
+                children_by_parent[pid].append(cat)
+                
+        def build_node(node):
+            node["children"] = children_by_parent.get(node["id"], [])
+            for child in node["children"]:
+                build_node(child)
+            return node
+            
+        return [build_node(root) for root in roots]

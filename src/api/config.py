@@ -35,6 +35,13 @@ class FastAPISettings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
     
+    # Database configuration
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres",
+        description="PostgreSQL connection URL",
+        validation_alias="DATABASE_URL"
+    )
+    
     # Supabase configuration (from existing config)
     supabase_url: str = Field(default_factory=lambda: supabase_config.url or "", description="Supabase project URL")
     supabase_anon_key: str = Field(default_factory=lambda: supabase_config.get_auth_key() if supabase_config.get_auth_key else "", description="Supabase anonymous key")

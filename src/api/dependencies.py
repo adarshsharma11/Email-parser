@@ -1,23 +1,18 @@
 """
-Dependency injection and service container for FastAPI application.
+Dependency injection and service container for FastAPI application using PostgreSQL.
 """
 from typing import Optional
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from functools import lru_cache
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..supabase_sync.supabase_client import SupabaseClient
+from ..db.psql_client import psql_client
 from ..utils.logger import setup_logger
 from .config import settings
-from .services.booking_service import BookingService
-from .services.user_service import UserService
-from .services.dashboard_service import DashboardService
 
-
-# Global service instances
-_supabase_client: Optional[SupabaseClient] = None
+# Global logger
 _logger = None
-
 
 def get_logger():
     """Get application logger instance."""
@@ -26,53 +21,62 @@ def get_logger():
         _logger = setup_logger("fastapi_app", settings.log_level)
     return _logger
 
+async def get_db_session():
+    """Get database session dependency."""
+    async for session in psql_client.get_session():
+        yield session
 
-def get_supabase_client() -> SupabaseClient:
-    """Get Supabase client instance."""
-    global _supabase_client
-    if _supabase_client is None:
-        _supabase_client = SupabaseClient()
-    return _supabase_client
-
-
-@lru_cache(maxsize=1)
-def get_booking_service():
-    """Get booking service instance with caching."""
+async def get_booking_service(session: AsyncSession = Depends(get_db_session)):
+    """Get booking service instance."""
     from .services.booking_service import BookingService
-    return BookingService(get_supabase_client(), get_logger())
+    return BookingService(session, get_logger())
 
-
-@lru_cache(maxsize=1)
-def get_crew_service():
-    """Get crew service instance with caching."""
+async def get_crew_service(session: AsyncSession = Depends(get_db_session)):
+    """Get crew service instance."""
     from .services.crew_service import CrewService
-    return CrewService()
+    return CrewService(session)
 
+async def get_user_service(session: AsyncSession = Depends(get_db_session)):
+    """Get user service instance."""
+    from .services.user_service import UserService
+    return UserService(session)
 
-@lru_cache(maxsize=1)
-def get_user_service():
-    """Get user service instance with caching."""
-    return UserService()
+async def get_dashboard_service(session: AsyncSession = Depends(get_db_session)):
+    """Get dashboard service instance."""
+    from .services.dashboard_service import DashboardService
+    return DashboardService(session)
 
-
-@lru_cache(maxsize=1)
-def get_dashboard_service():
-    return DashboardService()
-
-
-@lru_cache(maxsize=1)
-def get_activity_rule_service():
-    """Get activity rule service instance with caching."""
+async def get_activity_rule_service(session: AsyncSession = Depends(get_db_session)):
+    """Get activity rule service instance."""
     from .services.activity_rule_service import ActivityRuleService
-    return ActivityRuleService(get_supabase_client(), get_logger())
+    return ActivityRuleService(session, get_logger())
 
-
-@lru_cache(maxsize=1)
-def get_automation_service():
-    """Get automation service instance with caching."""
+async def get_automation_service(
+    activity_rule_service = Depends(get_activity_rule_service)
+):
+    """Get automation service instance."""
     from .services.automation_service import AutomationService
-    return AutomationService(get_activity_rule_service())
+    return AutomationService(activity_rule_service)
 
+async def get_service_category_service(session: AsyncSession = Depends(get_db_session)):
+    """Get service category service instance."""
+    from .services.service_category_service import ServiceCategoryService
+    return ServiceCategoryService(session)
+
+async def get_property_service(session: AsyncSession = Depends(get_db_session)):
+    """Get property service instance."""
+    from .services.property_service import PropertyService
+    return PropertyService(session)
+
+async def get_category_service(session: AsyncSession = Depends(get_db_session)):
+    """Get category service instance."""
+    from .services.category_service import CategoryService
+    return CategoryService(session)
+
+async def get_auth_service(session: AsyncSession = Depends(get_db_session)):
+    """Get auth service instance."""
+    from .services.auth_service import AuthService
+    return AuthService(session)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -82,9 +86,11 @@ async def lifespan(app: FastAPI):
     
     # Startup
     try:
-        # Test Supabase connection
-        client = get_supabase_client()
-        logger.info("Supabase client initialized successfully")
+        # Test PostgreSQL connection
+        from sqlalchemy import text
+        async with psql_client.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info("PostgreSQL connection verified successfully")
         
         yield
         
@@ -95,10 +101,6 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down FastAPI application")
     
-    # Cleanup global instances
-    global _supabase_client, _logger
-    _supabase_client = None
-    _logger = None
-    
-    # Clear cached services
-    get_booking_service.cache_clear()
+    # Close PostgreSQL engine
+    await psql_client.close()
+    logger.info("PostgreSQL engine closed")

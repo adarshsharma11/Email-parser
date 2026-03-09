@@ -152,10 +152,10 @@ class BookingLogger:
         )
     
     def log_new_booking(self, booking_data: dict):
-        """Log when a new booking is added to Firestore."""
+        """Log when a new booking is added to Database."""
         self.stats['new_bookings'] += 1
         self.logger.info(
-            "New booking added to Firestore",
+            "New booking added to Database",
             reservation_id=booking_data.get('reservation_id'),
             platform=booking_data.get('platform')
         )

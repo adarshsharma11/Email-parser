@@ -37,7 +37,7 @@ class BookingData:
     """Booking information extracted from emails."""
     reservation_id: str
     platform: Platform
-    guest_name: str
+    guest_name: str = "Unknown Guest"
     guest_phone: Optional[str] = None
     guest_email: Optional[str] = None
     check_in_date: Optional[datetime] = None
@@ -51,6 +51,14 @@ class BookingData:
     email_id: Optional[str] = None
     raw_data: Dict[str, Any] = field(default_factory=dict)
     
+    @property
+    def nights(self) -> int:
+        """Calculate number of nights from dates."""
+        if self.check_in_date and self.check_out_date:
+            delta = self.check_out_date - self.check_in_date
+            return max(0, delta.days)
+        return 0
+
     def __post_init__(self):
         if isinstance(self.platform, str):
             self.platform = Platform(self.platform.lower())
@@ -67,6 +75,7 @@ class BookingData:
             'check_out_date': self.check_out_date.isoformat() if self.check_out_date else None,
             'property_id': self.property_id,
             'property_name': self.property_name,
+            'nights': self.nights,
             'number_of_guests': self.number_of_guests,
             'total_amount': self.total_amount,
             'currency': self.currency,

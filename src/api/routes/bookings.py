@@ -6,7 +6,11 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from ..models import BookingStatsResponse, ErrorResponse, Platform, BookingSummary, PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse
+from ..models import (
+    BookingStatsResponse, ErrorResponse, Platform, BookingSummary, 
+    PaginatedBookingResponse, CreateBookingRequest, CreateBookingResponse,
+    SendWelcomeEmailRequest, APIResponse
+)
 from ..dependencies import get_booking_service
 from ..services.booking_service import BookingService
 
@@ -50,7 +54,7 @@ async def create_booking(
             media_type="application/x-ndjson"
         )
         
-    response = booking_service.create_booking(request)
+    response = await booking_service.create_booking(request)
     if not response.success:
         raise HTTPException(
             status_code=500,
@@ -105,7 +109,7 @@ async def get_bookings(
                     detail=f"Invalid platform: {platform}. Allowed values: {[p.value for p in Platform]}"
                 )
 
-        bookings = booking_service.get_bookings_paginated(
+        bookings = await booking_service.get_bookings_paginated(
             platform=platform_value,
             page=page,
             limit=limit
@@ -153,7 +157,7 @@ async def get_booking_stats(
         Detailed booking statistics
     """
     try:
-        stats_response = booking_service.get_booking_statistics()
+        stats_response = await booking_service.get_booking_statistics()
         
         if not stats_response.success:
             raise HTTPException(
@@ -183,6 +187,32 @@ class UpdateGuestPhoneRequest(BaseModel):
     guest_phone: str = Field(..., min_length=1, description="Updated guest phone number")
 
 
+@router.post(
+    "/send-welcome",
+    response_model=APIResponse,
+    summary="Send manual welcome email",
+    description="Update guest email and send a welcome email via SendGrid",
+    responses={
+        200: {"description": "Email sent successfully"},
+        404: {"description": "Booking not found"},
+        500: {"description": "Internal server error"}
+    }
+)
+async def send_manual_welcome_email(
+    request: SendWelcomeEmailRequest,
+    booking_service: BookingService = Depends(get_booking_service)
+):
+    """
+    Send a manual welcome email to a guest and update their record.
+    """
+    response = await booking_service.send_welcome_email(request)
+    if not response.success:
+        if "not found" in response.message:
+            raise HTTPException(status_code=404, detail=response.message)
+        raise HTTPException(status_code=500, detail=response.message)
+    return response
+
+
 @router.patch(
     "/{reservation_id}",
     summary="Update guest phone number for a booking",
@@ -201,7 +231,7 @@ async def update_booking_guest_phone(
     Update the `guest_phone` field for a booking identified by reservation id.
     """
     try:
-        ok = booking_service.update_guest_phone(reservation_id, payload.guest_phone)
+        ok = await booking_service.update_guest_phone(reservation_id, payload.guest_phone)
         if not ok:
             raise HTTPException(status_code=404, detail={
                 "message": "Booking not found or update failed",
@@ -239,7 +269,7 @@ async def get_booking_reservation_map(
     """
     try:
         # Fetch bookings filtered by platform
-        bookings_response = booking_service.get_bookings_paginated(
+        bookings_response = await booking_service.get_bookings_paginated(
             page=1, limit=1000, platform=platform
         )
 

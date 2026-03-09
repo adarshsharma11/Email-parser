@@ -1,7 +1,10 @@
 # Core dependencies
-supabase==2.7.4
-gotrue>=2.10.0
+# supabase==2.7.4 (migrating to psql)
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.23
+psycopg2-binary==2.9.9
 python-dotenv==1.0.0
+alembic==1.13.1
 colorama==0.4.6
 click==8.1.7
 
