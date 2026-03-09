@@ -379,17 +379,53 @@ class BookingService:
                         # If it's already a time object but naive, make it aware
                         service_time = service_time.replace(tzinfo=dt_mod.timezone.utc)
 
-                    svc_dict = {
-                        "booking_id": request.reservation_id,
-                        "service_id": svc.service_id,
-                        "service_date": svc.service_date.date() if hasattr(svc.service_date, "date") else svc.service_date,
-                        "time": service_time
-                    }
-                    svc_query = text("""
-                        INSERT INTO booking_service (booking_id, service_id, service_date, time)
-                        VALUES (:booking_id, :service_id, :service_date, :time)
-                    """)
-                    await self.session.execute(svc_query, svc_dict)
+                    # The booking_service table type for booking_id is inconsistent between environments:
+                    # - Live server: BIGINT (requires int)
+                    # - Local server: TEXT (requires str)
+                    # We use a robust approach to handle both.
+                    booking_id_val = booking_record.get("id") or request.reservation_id
+                    
+                    # We try to use the most likely type (int for numeric IDs, str for others)
+                    # but we will retry if the database complains about the type mismatch.
+                    async def execute_insert(val):
+                        s_dict = {
+                            "booking_id": val,
+                            "service_id": svc.service_id,
+                            "service_date": svc.service_date.date() if hasattr(svc.service_date, "date") else svc.service_date,
+                            "time": service_time
+                        }
+                        s_query = text("""
+                            INSERT INTO booking_service (booking_id, service_id, service_date, time)
+                            VALUES (:booking_id, :service_id, :service_date, :time)
+                        """)
+                        await self.session.execute(s_query, s_dict)
+
+                    try:
+                        # Try as an integer first if it looks numeric (likely for live server BIGINT)
+                        try:
+                            val_to_try = int(booking_id_val)
+                        except (ValueError, TypeError):
+                            val_to_try = str(booking_id_val)
+                        
+                        # Start a nested transaction (savepoint) for the retry logic
+                        async with self.session.begin_nested():
+                            await execute_insert(val_to_try)
+                    except Exception as e:
+                        # If it failed due to a type mismatch, try the other type
+                        error_str = str(e).lower()
+                        if "expected str" in error_str or "expected int" in error_str or "invalid input" in error_str:
+                            self.logger.info(f"Retrying booking_service insert with alternate type due to: {e}")
+                            # Try the alternate type (str if we tried int, and vice versa)
+                            try:
+                                if isinstance(val_to_try, int):
+                                    await execute_insert(str(booking_id_val))
+                                else:
+                                    await execute_insert(int(booking_id_val))
+                            except Exception as retry_err:
+                                self.logger.error(f"Retry also failed: {retry_err}")
+                                raise retry_err
+                        else:
+                            raise e
             
             return CreateBookingResponse(
                 success=True,
@@ -500,8 +536,15 @@ class BookingService:
 
     async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:
+            # Handle potential bigint requirement for reservation_id on live server
+            res_id_val = booking_id
+            try:
+                res_id_val = int(booking_id)
+            except (ValueError, TypeError):
+                pass
+
             payload = {
-                "reservation_id": booking_id,
+                "reservation_id": res_id_val,
                 "property_id": property_id,
                 "scheduled_date": scheduled_date,
                 "crew_id": crew_id
