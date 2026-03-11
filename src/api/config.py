@@ -24,6 +24,11 @@ class FastAPISettings(BaseSettings):
     # API settings
     api_version: str = Field(default="v1", description="API version")
     api_prefix: str = Field(default="/api", description="API prefix")
+    api_base_url: str = Field(
+        default="http://127.0.0.1:8001",
+        description="API base URL for notifications",
+        validation_alias="API_BASE_URL"
+    )
     
     # Security settings
     cors_origins: Optional[list[str]] = Field(

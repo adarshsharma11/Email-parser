@@ -132,6 +132,7 @@ class Notifier:
                         crew_name=crew_name,
                         property_name=task['property_id'],
                         scheduled_date=str(task['scheduled_date']),
+                        task_id=str(task.get('id', '')),
                         guest_details=guest_details_str
                     )
                     
@@ -191,18 +192,17 @@ class Notifier:
             property_name = service_details.get("property_name", "Property")
 
             subject = f"New Service Assignment: {service_name} at {property_name}"
-            msg = f"New service '{service_name}' has been assigned to you for {property_name} on {service_date} at {service_time}."
             
-            body = f"""
-            Hi {provider_name},<br/><br/>
-            {msg}<br/><br/>
-            <b>Reservation ID:</b> {reservation_id}<br/>
-            <b>Service:</b> {service_name}<br/>
-            <b>Date:</b> {service_date}<br/>
-            <b>Time:</b> {service_time}<br/>
-            <b>Property:</b> {property_name}<br/><br/>
-            Please confirm your availability.
-            """
+            # Using new service template
+            body = EmailTemplates.get_service_template(
+                provider_name=provider_name,
+                service_name=service_name,
+                property_name=property_name,
+                service_date=str(service_date),
+                service_time=str(service_time),
+                task_id=str(service_details.get("id", reservation_id)),
+                reservation_id=reservation_id
+            )
 
             self.logger.info("Notifying service provider", 
                            provider_name=provider_name, 
@@ -212,7 +212,7 @@ class Notifier:
             email_success = False
             if provider_email:
                 try:
-                    self.email.send(to=provider_email, subject=subject, body=body, html=True, credentials=self.email_credentials)
+                    self.email.send(to=provider_email, subject=subject, body=body, html=True)
                     email_success = True
                     self.logger.info("Service provider email sent successfully", email=provider_email)
                 except Exception as e:

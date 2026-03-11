@@ -45,13 +45,16 @@ class CrewService:
             # Handle error
             return None
 
-    async def get_active_crews(self, property_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_active_crews(self, property_id: Optional[str] = None, role: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
             query_str = f"SELECT * FROM {app_config.cleaning_crews_collection} WHERE active = True"
             params = {}
             if property_id:
                 query_str += " AND property_id = :pid"
                 params["pid"] = property_id
+            if role:
+                query_str += " AND role = :role"
+                params["role"] = role
             
             result = await self.session.execute(text(query_str), params)
             rows = result.fetchall()

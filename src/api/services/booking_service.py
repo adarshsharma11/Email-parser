@@ -198,15 +198,18 @@ class BookingService:
             
             if await self.automation_service.is_rule_enabled("create_cleaning_task"):
                 try:
-                    if request.property_name:
-                        crew = await self.crew_service.get_single_crew_by_category(category_id=2)
-                        notified_count = 0
-                        
-                        if crew:
+                    notified_count = 0
+                    # Notify all active crews where role='Cleaning'
+                    # Per user request, crews work on all properties, so no property_id check needed.
+                    crews = await self.crew_service.get_active_crews(role="Cleaning")
+                    
+                    if crews:
+                        for crew in crews:
+                            scheduled_date = request.check_out_date
                             scheduled_date = request.check_out_date
                             task = await self.create_cleaning_task(
                                 booking_id=request.reservation_id,
-                                property_id=request.property_name,
+                                property_id=request.property_name or request.property_id or "Unknown",
                                 scheduled_date=scheduled_date,
                                 crew_id=crew.get("id")
                             )
@@ -215,15 +218,18 @@ class BookingService:
                                 task_for_notify = {
                                     "id": task.get("id", f"task_{request.reservation_id}"),
                                     "booking_id": request.reservation_id,
-                                    "property_id": request.property_name,
+                                    "property_id": request.property_name or request.property_id or "Unknown",
                                     "scheduled_date": scheduled_date
                                 }
                                 
                                 if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
-                                    notified_count = 1
-                                    from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                                    calendar_client = GoogleCalendarClient()
-                                    calendar_client.add_cleaning_event(crew, task_for_notify)
+                                    notified_count += 1
+                                    try:
+                                        from ...calendar_integration.google_calendar_client import GoogleCalendarClient
+                                        calendar_client = GoogleCalendarClient()
+                                        calendar_client.add_cleaning_event(crew, task_for_notify)
+                                    except Exception as cal_err:
+                                        self.logger.error(f"Failed to add crew calendar event: {cal_err}")
                             
                         yield json.dumps({
                             "step": "crew_notification",
@@ -235,7 +241,7 @@ class BookingService:
                         yield json.dumps({
                             "step": "crew_notification",
                             "status": "skipped",
-                            "message": "No property name for crew lookup"
+                            "message": "No active cleaning crew found"
                         }, default=str) + "\n"
                 except Exception as e:
                     self.logger.error(f"Crew notification failed: {e}")
@@ -261,9 +267,12 @@ class BookingService:
                 }, default=str) + "\n"
                 
                 notified_services = 0
-                for svc in request.services:
+                # Get created services from the response data
+                created_services = response.data.get("services", [])
+                
+                for idx, svc in enumerate(request.services):
                     try:
-                        service_category = await self.service_category_service.get_category(svc.service_id)
+                        service_category = await self.service_category_service.get_category(int(svc.service_id))
                         if service_category:
                             provider = {
                                 "id": service_category.get("id"),
@@ -272,11 +281,15 @@ class BookingService:
                                 "phone": service_category.get("phone")
                             }
                             
+                            # Find the corresponding created service record for the ID
+                            service_record = created_services[idx] if idx < len(created_services) else {}
+                            
                             service_details = {
+                                "id": service_record.get("id"), # Pass the unique service task ID
                                 "reservation_id": request.reservation_id,
                                 "service_name": service_category.get("category_name", "Service"),
                                 "service_date": svc.service_date.strftime("%Y-%m-%d") if hasattr(svc.service_date, "strftime") else str(svc.service_date),
-                                "service_time": svc.time,
+                                "service_time": str(svc.time),
                                 "property_name": request.property_name or "Vacation Rental"
                             }
                             
@@ -356,6 +369,7 @@ class BookingService:
             booking_record = dict(booking_row._mapping)
             
             # Handle services
+            service_records = []
             if request.services:
                 for svc in request.services:
                     # Convert time string to time object if it's a string
@@ -397,8 +411,12 @@ class BookingService:
                         s_query = text("""
                             INSERT INTO booking_service (booking_id, service_id, service_date, time)
                             VALUES (:booking_id, :service_id, :service_date, :time)
+                            RETURNING *
                         """)
-                        await self.session.execute(s_query, s_dict)
+                        res = await self.session.execute(s_query, s_dict)
+                        row = res.fetchone()
+                        if row:
+                            service_records.append(dict(row._mapping))
 
                     try:
                         # Try as an integer first if it looks numeric (likely for live server BIGINT)
@@ -427,6 +445,7 @@ class BookingService:
                         else:
                             raise e
             
+            booking_record["services"] = service_records
             return CreateBookingResponse(
                 success=True,
                 message="Booking created successfully",
@@ -536,12 +555,8 @@ class BookingService:
 
     async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:
-            # Handle potential bigint requirement for reservation_id on live server
-            res_id_val = booking_id
-            try:
-                res_id_val = int(booking_id)
-            except (ValueError, TypeError):
-                pass
+            # Ensure reservation_id is passed as a string (the column type is text)
+            res_id_val = str(booking_id)
 
             payload = {
                 "reservation_id": res_id_val,
