@@ -19,6 +19,8 @@ class PropertyCreate(BaseModel):
     airbnb_id: str | None = None
     booking_id: str | None = None
     status: str | None = None
+    base_price: float = 0.0
+    bedrooms: int = 0
 
 @router.post("/property")
 async def create_property(property_data: PropertyCreate, service: PropertyService = Depends(get_property_service)):
@@ -31,7 +33,9 @@ async def create_property(property_data: PropertyCreate, service: PropertyServic
         vrbo_id=property_data.vrbo_id,
         airbnb_id=property_data.airbnb_id,
         booking_id=property_data.booking_id,
-        status=property_data.status or "active"
+        status=property_data.status or "active",
+        base_price=property_data.base_price,
+        bedrooms=property_data.bedrooms
     )
 
     if not result["success"]:
