@@ -20,6 +20,8 @@ class PropertyService:
         airbnb_id: str | None = None,
         booking_id: str | None = None,
         status: str = "active",
+        base_price: float = 0.0,
+        bedrooms: int = 0,
     )-> Dict[str, Any]:
         """Save a new property and generate its iCal feed URL."""
         try:
@@ -32,6 +34,8 @@ class PropertyService:
                 "airbnb_id": airbnb_id,
                 "booking_id": booking_id,
                 "status": status,
+                "base_price": base_price,
+                "bedrooms": bedrooms,
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
             }

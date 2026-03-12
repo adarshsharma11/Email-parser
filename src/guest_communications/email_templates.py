@@ -1,3 +1,4 @@
+from ..api.config import settings
 
 class EmailTemplates:
     @staticmethod
@@ -60,7 +61,11 @@ class EmailTemplates:
         """
 
     @staticmethod
-    def get_cleaning_template(crew_name: str, property_name: str, scheduled_date: str, guest_details: str = "") -> str:
+    def get_cleaning_template(crew_name: str, property_name: str, scheduled_date: str, task_id: str, guest_details: str = "") -> str:
+        api_base = f"{settings.api_base_url}{settings.api_prefix}/{settings.api_version}/service-bookings/respond"
+        accept_url = f"{api_base}?task_id={task_id}&type=cleaning&action=accept"
+        reject_url = f"{api_base}?task_id={task_id}&type=cleaning&action=reject"
+        
         return f"""
         <!DOCTYPE html>
         <html>
@@ -76,6 +81,10 @@ class EmailTemplates:
                 .value {{ font-size: 16px; font-weight: bold; margin-bottom: 15px; }}
                 .guest-box {{ background-color: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-top: 20px; }}
                 .footer {{ background-color: #f7f7f7; padding: 20px; text-align: center; font-size: 12px; color: #717171; }}
+                .actions {{ text-align: center; margin-top: 30px; }}
+                .btn {{ display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 0 10px; }}
+                .btn-accept {{ background-color: #28a745; color: white !important; }}
+                .btn-reject {{ background-color: #dc3545; color: white !important; }}
             </style>
         </head>
         <body>
@@ -97,7 +106,75 @@ class EmailTemplates:
 
                     {f'<div class="guest-box"><strong>Guest Details:</strong><br/>{guest_details}</div>' if guest_details else ''}
 
-                    <p>Please confirm your availability for this task as soon as possible.</p>
+                    <div class="actions">
+                        <a href="{accept_url}" class="btn btn-accept">Accept Task</a>
+                        <a href="{reject_url}" class="btn btn-reject">Reject Task</a>
+                    </div>
+
+                    <p style="margin-top: 20px; text-align: center; font-size: 14px;">Please confirm your availability by clicking one of the buttons above.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+    @staticmethod
+    def get_service_template(provider_name: str, service_name: str, property_name: str, service_date: str, service_time: str, task_id: str, reservation_id: str = "") -> str:
+        api_base = f"{settings.api_base_url}{settings.api_prefix}/{settings.api_version}/service-bookings/respond"
+        accept_url = f"{api_base}?task_id={task_id}&type=service&action=accept"
+        reject_url = f"{api_base}?task_id={task_id}&type=service&action=reject"
+        
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 20px auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }}
+                .header {{ background-color: #4a148c; color: white; padding: 30px; text-align: center; }}
+                .header h1 {{ margin: 0; font-size: 24px; }}
+                .content {{ padding: 30px; }}
+                .task-info {{ background-color: #f3e5f5; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #4a148c; }}
+                .label {{ font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold; }}
+                .value {{ font-size: 16px; font-weight: bold; margin-bottom: 15px; }}
+                .footer {{ background-color: #f7f7f7; padding: 20px; text-align: center; font-size: 12px; color: #717171; }}
+                .actions {{ text-align: center; margin-top: 30px; }}
+                .btn {{ display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 0 10px; }}
+                .btn-accept {{ background-color: #28a745; color: white !important; }}
+                .btn-reject {{ background-color: #dc3545; color: white !important; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>New Service Assignment 🛠️</h1>
+                </div>
+                <div class="content">
+                    <p>Hi <strong>{provider_name}</strong>,</p>
+                    <p>You have a new service task assigned.</p>
+                    
+                    <div class="task-info">
+                        <div class="label">Service</div>
+                        <div class="value">{service_name}</div>
+
+                        <div class="label">Property</div>
+                        <div class="value">{property_name}</div>
+                        
+                        <div class="label">Date & Time</div>
+                        <div class="value">{service_date} at {service_time}</div>
+                        
+                        {f'<div class="label">Reservation ID</div><div class="value">{reservation_id}</div>' if reservation_id else ''}
+                    </div>
+
+                    <div class="actions">
+                        <a href="{accept_url}" class="btn btn-accept">Accept Task</a>
+                        <a href="{reject_url}" class="btn btn-reject">Reject Task</a>
+                    </div>
+
+                    <p style="margin-top: 20px; text-align: center; font-size: 14px;">Please confirm your availability by clicking one of the buttons above.</p>
                 </div>
                 <div class="footer">
                     <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>

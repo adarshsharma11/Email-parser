@@ -2,7 +2,7 @@
 Main FastAPI application factory.
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
@@ -11,7 +11,7 @@ import json
 
 from .config import settings
 from .dependencies import get_logger, get_booking_service, lifespan
-from .routes import bookings, health, crews, ical, users, dashboard, auth, service_categories, activity_rules, automation, emails
+from .routes import bookings, health, crews, ical, users, dashboard, auth, service_categories, activity_rules, automation, emails, service_bookings
 from .routes import categories
 from .models import ErrorResponse
 
@@ -51,6 +51,19 @@ def create_app() -> FastAPI:
     )
     
     # Global exception handler
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        """Handler for HTTP exceptions to return structured error response."""
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=ErrorResponse(
+                success=False,
+                message=str(exc.detail) if exc.detail else "An error occurred",
+                error_code="HTTP_ERROR",
+                details={"detail": exc.detail}
+            ).dict()
+        )
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         """Global exception handler for unhandled errors."""
@@ -75,6 +88,7 @@ def create_app() -> FastAPI:
             f"{settings.api_prefix}/v1/auth/register",
             f"{settings.api_prefix}/v1/auth/forgot-password",
             f"{settings.api_prefix}/v1/auth/reset-password",
+            f"{settings.api_prefix}/v1/service-bookings/respond",
         }
         if (
             method == "OPTIONS"
@@ -154,6 +168,11 @@ def create_app() -> FastAPI:
         automation.router,
         prefix=f"{settings.api_prefix}/v1"
     )
+    app.include_router(
+        service_bookings.router,
+        prefix=f"{settings.api_prefix}/v1"
+    )
+
     app.include_router(
         emails.router,
         prefix=f"{settings.api_prefix}/v1"
