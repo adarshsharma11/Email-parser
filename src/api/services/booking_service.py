@@ -633,10 +633,10 @@ class BookingService:
         row = result.fetchone()
         return dict(row._mapping) if row else None
 
-    async def get_booking_by_property_and_dates(self, property_id: str, check_in: Any, check_out: Any) -> Optional[Dict[str, Any]]:
+    async def get_booking_by_property_and_dates(self, property_id: str, check_in: Any, check_out: Any, guest_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Find a booking by property and dates to prevent duplicates."""
         try:
-            # Handle potential string dates from raw_data
+            # Handle potential string dates
             if isinstance(check_in, str):
                 from datetime import datetime
                 check_in = datetime.fromisoformat(check_in.replace('Z', '+00:00'))
@@ -644,18 +644,25 @@ class BookingService:
                 from datetime import datetime
                 check_out = datetime.fromisoformat(check_out.replace('Z', '+00:00'))
 
-            query = text("""
+            sql = """
                 SELECT * FROM bookings 
-                WHERE property_id = :pid 
+                WHERE (property_id = :pid OR property_name = :pid)
                 AND DATE(check_in_date) = DATE(:ci) 
                 AND DATE(check_out_date) = DATE(:co)
-                LIMIT 1
-            """)
-            result = await self.session.execute(query, {
+            """
+            params = {
                 "pid": property_id,
                 "ci": check_in,
                 "co": check_out
-            })
+            }
+
+            if guest_name:
+                sql += " AND guest_name = :gn"
+                params["gn"] = guest_name
+
+            sql += " LIMIT 1"
+            
+            result = await self.session.execute(text(sql), params)
             row = result.fetchone()
             return dict(row._mapping) if row else None
         except Exception as e:

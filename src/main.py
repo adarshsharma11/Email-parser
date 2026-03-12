@@ -250,13 +250,32 @@ class BookingAutomation:
                 if successful_bookings:
                     for b in successful_bookings:
                         try:
-                            # Session-level duplicate check (Property + Dates)
-                            session_key = f"{b.property_id}_{b.check_in_date}_{b.check_out_date}"
-                            if b.property_id and b.check_in_date and b.check_out_date:
+                            # Session-level duplicate check (Property + Dates + Guest)
+                            pid_key = b.property_id or b.property_name
+                            session_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}_{b.guest_name}"
+                            if pid_key and b.check_in_date and b.check_out_date:
                                 if session_key in processed_in_session:
-                                    self.logger.info(f"Duplicate booking found in current batch for property {b.property_id}, skipping.")
-                                    continue
+                                      self.logger.info(f"Duplicate booking found in current batch for property {pid_key}, skipping.")
+                                      continue
                                 processed_in_session.add(session_key)
+
+                            # Check for existing booking (By ID OR by Property+Dates)
+                            existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
+                            
+                            # Use property_id or property_name as identifier for the stay
+                            pid_to_check = b.property_id or b.property_name
+                            
+                            if not existing and pid_to_check and b.check_in_date and b.check_out_date:
+                                existing = await booking_service.get_booking_by_property_and_dates(
+                                    pid_to_check, b.check_in_date, b.check_out_date, b.guest_name
+                                )
+                                if existing:
+                                    self.logger.info(f"Duplicate booking found by dates for property {pid_to_check}, updating existing record.")
+                                    # Use the existing reservation_id to trigger an update instead of a new insert
+                                    if hasattr(existing, 'get'):
+                                        b.reservation_id = existing.get('reservation_id')
+                                    else:
+                                        b.reservation_id = getattr(existing, 'reservation_id', b.reservation_id)
 
                             from .api.models import CreateBookingRequest
                             req = CreateBookingRequest(
@@ -277,15 +296,6 @@ class BookingAutomation:
                                 email_id=b.email_id,
                                 raw_data=b.raw_data
                             )
-                            # Check for existing booking (By ID OR by Property+Dates)
-                            existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
-                            
-                            if not existing and b.property_id and b.check_in_date and b.check_out_date:
-                                existing = await booking_service.get_booking_by_property_and_dates(
-                                    b.property_id, b.check_in_date, b.check_out_date
-                                )
-                                if existing:
-                                    self.logger.info(f"Duplicate booking found by dates for property {b.property_id}, skipping.")
 
                             if not existing:
                                 new_count += 1
