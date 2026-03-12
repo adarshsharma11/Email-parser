@@ -22,6 +22,7 @@ class PropertyService:
         status: str = "active",
         base_price: float = 0.0,
         bedrooms: int = 0,
+        owner_id: int | None = None,
     )-> Dict[str, Any]:
         """Save a new property and generate its iCal feed URL."""
         try:
@@ -36,6 +37,7 @@ class PropertyService:
                 "status": status,
                 "base_price": base_price,
                 "bedrooms": bedrooms,
+                "owner_id": owner_id,
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
             }

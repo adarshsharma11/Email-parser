@@ -1,6 +1,6 @@
 import os
 import base64
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -31,9 +31,9 @@ class AuthService:
     def decrypt(self, token: str) -> str:
         return self.fernet.decrypt(token.encode()).decode()
 
-    async def save_user(self, email: str, password: str, first_name: Optional[str] = None, last_name: Optional[str] = None) -> Dict[str, Any]:
+    async def save_user(self, email: str, password: str, first_name: Optional[str] = None, last_name: Optional[str] = None, role: str = "owner") -> Dict[str, Any]:
         encrypted = self.encrypt(password)
-        payload = {"email": email, "password": encrypted}
+        payload = {"email": email, "password": encrypted, "role": role}
         if first_name is not None:
             payload["first_name"] = first_name
         if last_name is not None:
@@ -58,19 +58,27 @@ class AuthService:
             
         data = dict(row._mapping)
         return {
+            "id": data.get("id"),
             "email": data.get("email"),
             "password": data.get("password"),
             "first_name": data.get("first_name"),
             "last_name": data.get("last_name"),
+            "role": data.get("role"),
         }
 
     async def get_user(self, email: str) -> Optional[Dict[str, Any]]:
-        query = text("SELECT email, password, first_name, last_name FROM users WHERE email = :email LIMIT 1")
+        query = text("SELECT id, email, password, first_name, last_name, role FROM users WHERE email = :email LIMIT 1")
         result = await self.session.execute(query, {"email": email})
         row = result.fetchone()
         if row:
             return dict(row._mapping)
         return None
+
+    async def list_owners(self) -> List[Dict[str, Any]]:
+        query = text("SELECT id, email, first_name, last_name FROM users WHERE role = 'owner'")
+        result = await self.session.execute(query)
+        rows = result.fetchall()
+        return [dict(row._mapping) for row in rows]
 
     async def update_profile(self, email: str, first_name: str, last_name: str) -> Dict[str, Any]:
         query = text("UPDATE users SET first_name = :first_name, last_name = :last_name, updated_at = :updated_at WHERE email = :email RETURNING *")

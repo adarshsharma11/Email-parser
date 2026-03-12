@@ -4,58 +4,80 @@ class EmailTemplates:
     @staticmethod
     def get_welcome_template(guest_name: str, property_name: str, check_in: str, check_out: str, reservation_id: str) -> str:
         return f"""
-        <!DOCTYPE html>
-        <html>
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml">
         <head>
-            <style>
-                body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 0; }}
-                .container {{ max-width: 600px; margin: 20px auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }}
-                .header {{ background-color: #ff385c; color: white; padding: 30px; text-align: center; }}
-                .header h1 {{ margin: 0; font-size: 24px; }}
-                .content {{ padding: 30px; }}
-                .property-info {{ background-color: #f7f7f7; border-radius: 8px; padding: 20px; margin: 20px 0; }}
-                .date-grid {{ display: flex; justify-content: space-between; margin-bottom: 10px; }}
-                .date-item {{ flex: 1; }}
-                .date-label {{ font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold; }}
-                .date-value {{ font-size: 16px; font-weight: bold; }}
-                .footer {{ background-color: #f7f7f7; padding: 20px; text-align: center; font-size: 12px; color: #717171; }}
-                .btn {{ display: inline-block; background-color: #ff385c; color: white !important; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }}
-            </style>
+            <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+            <title>Booking Confirmation</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
         </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>Your Booking is Confirmed! 🎉</h1>
-                </div>
-                <div class="content">
-                    <p>Hi <strong>{guest_name}</strong>,</p>
-                    <p>We're thrilled to host you! Your reservation at <strong>{property_name}</strong> is all set.</p>
-                    
-                    <div class="property-info">
-                        <div class="date-grid">
-                            <div class="date-item">
-                                <div class="date-label">Check-in</div>
-                                <div class="date-value">{check_in}</div>
-                            </div>
-                            <div class="date-item" style="text-align: right;">
-                                <div class="date-label">Check-out</div>
-                                <div class="date-value">{check_out}</div>
-                            </div>
-                        </div>
-                        <div style="margin-top: 15px;">
-                            <div class="date-label">Reservation ID</div>
-                            <div class="date-value">{reservation_id}</div>
-                        </div>
-                    </div>
-
-                    <p>If you have any questions before your arrival, please don't hesitate to reach out. We want to ensure your stay is absolutely perfect!</p>
-                    <p>Contact us on effi@fireflymedia.com!</p>
-                    
-                </div>
-                <div class="footer">
-                    <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>
-                </div>
-            </div>
+        <body style="margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; background-color: #f9f9f9;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                    <td style="padding: 20px 0 30px 0;">
+                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff; overflow: hidden;">
+                            <tr>
+                                <td align="center" bgcolor="#ff385c" style="padding: 40px 0 30px 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                                    Your Booking is Confirmed! 🎉
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 40px 30px 40px 30px;">
+                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                        <tr>
+                                            <td style="font-size: 18px; font-weight: bold; padding-bottom: 20px;">
+                                                Hi {guest_name},
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="font-size: 16px; padding-bottom: 30px;">
+                                                We're thrilled to host you! Your reservation at <strong>{property_name}</strong> is all set. Here are your booking details:
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>
+                                                <table border="0" cellpadding="20" cellspacing="0" width="100%" style="background-color: #f7f7f7; border-radius: 8px;">
+                                                    <tr>
+                                                        <td width="50%" style="vertical-align: top;">
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Check-in</div>
+                                                            <div style="font-size: 16px; font-weight: bold;">{check_in}</div>
+                                                        </td>
+                                                        <td width="50%" style="vertical-align: top; text-align: right;">
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Check-out</div>
+                                                            <div style="font-size: 16px; font-weight: bold;">{check_out}</div>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td colspan="2" style="padding-top: 15px; border-top: 1px solid #e0e0e0;">
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Reservation ID</div>
+                                                            <div style="font-size: 16px; font-weight: bold;">{reservation_id}</div>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding-top: 30px; font-size: 16px;">
+                                                If you have any questions before your arrival, please don't hesitate to reach out. We want to ensure your stay is absolutely perfect!
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding-top: 20px; font-size: 16px;">
+                                                Contact us at <a href="mailto:effi@fireflymedia.com" style="color: #ff385c; text-decoration: none; font-weight: bold;">effi@fireflymedia.com</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td bgcolor="#f7f7f7" style="padding: 30px 30px 30px 30px; color: #717171; font-size: 12px; text-align: center;">
+                                    <p style="margin: 0;">&copy; 2026 Vacation Rental Management. All rights reserved.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
         </body>
         </html>
         """
@@ -67,56 +89,81 @@ class EmailTemplates:
         reject_url = f"{api_base}?task_id={task_id}&type=cleaning&action=reject"
         
         return f"""
-        <!DOCTYPE html>
-        <html>
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml">
         <head>
-            <style>
-                body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 0; }}
-                .container {{ max-width: 600px; margin: 20px auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }}
-                .header {{ background-color: #008489; color: white; padding: 30px; text-align: center; }}
-                .header h1 {{ margin: 0; font-size: 24px; }}
-                .content {{ padding: 30px; }}
-                .task-info {{ background-color: #f7f7f7; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #008489; }}
-                .label {{ font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold; }}
-                .value {{ font-size: 16px; font-weight: bold; margin-bottom: 15px; }}
-                .guest-box {{ background-color: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-top: 20px; }}
-                .footer {{ background-color: #f7f7f7; padding: 20px; text-align: center; font-size: 12px; color: #717171; }}
-                .actions {{ text-align: center; margin-top: 30px; }}
-                .btn {{ display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 0 10px; }}
-                .btn-accept {{ background-color: #28a745; color: white !important; }}
-                .btn-reject {{ background-color: #dc3545; color: white !important; }}
-            </style>
+            <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+            <title>New Cleaning Assignment</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
         </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>New Cleaning Assignment 🧹</h1>
-                </div>
-                <div class="content">
-                    <p>Hi <strong>{crew_name}</strong>,</p>
-                    <p>You have a new cleaning task scheduled.</p>
-                    
-                    <div class="task-info">
-                        <div class="label">Property</div>
-                        <div class="value">{property_name}</div>
-                        
-                        <div class="label">Scheduled Date</div>
-                        <div class="value">{scheduled_date}</div>
-                    </div>
-
-                    {f'<div class="guest-box"><strong>Guest Details:</strong><br/>{guest_details}</div>' if guest_details else ''}
-
-                    <div class="actions">
-                        <a href="{accept_url}" class="btn btn-accept">Accept Task</a>
-                        <a href="{reject_url}" class="btn btn-reject">Reject Task</a>
-                    </div>
-
-                    <p style="margin-top: 20px; text-align: center; font-size: 14px;">Please confirm your availability by clicking one of the buttons above.</p>
-                </div>
-                <div class="footer">
-                    <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>
-                </div>
-            </div>
+        <body style="margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; background-color: #f9f9f9;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                    <td style="padding: 20px 0 30px 0;">
+                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff; overflow: hidden;">
+                            <tr>
+                                <td align="center" bgcolor="#008489" style="padding: 40px 0 30px 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                                    New Cleaning Assignment 🧹
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 40px 30px 40px 30px;">
+                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                        <tr>
+                                            <td style="font-size: 18px; font-weight: bold; padding-bottom: 20px;">
+                                                Hi {crew_name},
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="font-size: 16px; padding-bottom: 30px;">
+                                                You have a new cleaning task scheduled. Please review the details below:
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>
+                                                <table border="0" cellpadding="20" cellspacing="0" width="100%" style="background-color: #f7f7f7; border-radius: 8px; border-left: 4px solid #008489;">
+                                                    <tr>
+                                                        <td>
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Property</div>
+                                                            <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px;">{property_name}</div>
+                                                            
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Scheduled Date</div>
+                                                            <div style="font-size: 16px; font-weight: bold;">{scheduled_date}</div>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        {f'<tr><td style="padding-top: 20px;"><div style="background-color: #ffffff; border: 1px solid #dddddd; border-radius: 8px; padding: 15px;"><strong>Guest Details:</strong><br/>{guest_details}</div></td></tr>' if guest_details else ''}
+                                        <tr>
+                                            <td align="center" style="padding-top: 40px;">
+                                                <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                                    <tr>
+                                                        <td align="center">
+                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Accept Task</a>
+                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Reject Task</a>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding-top: 30px; font-size: 14px; text-align: center; color: #717171;">
+                                                Please confirm your availability by clicking one of the buttons above.
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td bgcolor="#f7f7f7" style="padding: 30px 30px 30px 30px; color: #717171; font-size: 12px; text-align: center;">
+                                    <p style="margin: 0;">&copy; 2026 Vacation Rental Management. All rights reserved.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
         </body>
         </html>
         """
@@ -128,58 +175,85 @@ class EmailTemplates:
         reject_url = f"{api_base}?task_id={task_id}&type=service&action=reject"
         
         return f"""
-        <!DOCTYPE html>
-        <html>
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml">
         <head>
-            <style>
-                body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 0; }}
-                .container {{ max-width: 600px; margin: 20px auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }}
-                .header {{ background-color: #4a148c; color: white; padding: 30px; text-align: center; }}
-                .header h1 {{ margin: 0; font-size: 24px; }}
-                .content {{ padding: 30px; }}
-                .task-info {{ background-color: #f3e5f5; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #4a148c; }}
-                .label {{ font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold; }}
-                .value {{ font-size: 16px; font-weight: bold; margin-bottom: 15px; }}
-                .footer {{ background-color: #f7f7f7; padding: 20px; text-align: center; font-size: 12px; color: #717171; }}
-                .actions {{ text-align: center; margin-top: 30px; }}
-                .btn {{ display: inline-block; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 0 10px; }}
-                .btn-accept {{ background-color: #28a745; color: white !important; }}
-                .btn-reject {{ background-color: #dc3545; color: white !important; }}
-            </style>
+            <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+            <title>New Service Assignment</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
         </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>New Service Assignment 🛠️</h1>
-                </div>
-                <div class="content">
-                    <p>Hi <strong>{provider_name}</strong>,</p>
-                    <p>You have a new service task assigned.</p>
-                    
-                    <div class="task-info">
-                        <div class="label">Service</div>
-                        <div class="value">{service_name}</div>
+        <body style="margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; background-color: #f9f9f9;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                    <td style="padding: 20px 0 30px 0;">
+                        <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="border: 1px solid #e0e0e0; border-radius: 8px; background-color: #ffffff; overflow: hidden;">
+                            <tr>
+                                <td align="center" bgcolor="#4a148c" style="padding: 40px 0 30px 0; color: #ffffff; font-size: 28px; font-weight: bold;">
+                                    New Service Assignment 🛠️
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 40px 30px 40px 30px;">
+                                    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                        <tr>
+                                            <td style="font-size: 18px; font-weight: bold; padding-bottom: 20px;">
+                                                Hi {provider_name},
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="font-size: 16px; padding-bottom: 30px;">
+                                                You have a new service task assigned. Please review the details below:
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td>
+                                                <table border="0" cellpadding="20" cellspacing="0" width="100%" style="background-color: #f3e5f5; border-radius: 8px; border-left: 4px solid #4a148c;">
+                                                    <tr>
+                                                        <td>
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Service</div>
+                                                            <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px;">{service_name}</div>
 
-                        <div class="label">Property</div>
-                        <div class="value">{property_name}</div>
-                        
-                        <div class="label">Date & Time</div>
-                        <div class="value">{service_date} at {service_time}</div>
-                        
-                        {f'<div class="label">Reservation ID</div><div class="value">{reservation_id}</div>' if reservation_id else ''}
-                    </div>
-
-                    <div class="actions">
-                        <a href="{accept_url}" class="btn btn-accept">Accept Task</a>
-                        <a href="{reject_url}" class="btn btn-reject">Reject Task</a>
-                    </div>
-
-                    <p style="margin-top: 20px; text-align: center; font-size: 14px;">Please confirm your availability by clicking one of the buttons above.</p>
-                </div>
-                <div class="footer">
-                    <p>&copy; 2026 Vacation Rental Management. All rights reserved.</p>
-                </div>
-            </div>
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Property</div>
+                                                            <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px;">{property_name}</div>
+                                                            
+                                                            <div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Date & Time</div>
+                                                            <div style="font-size: 16px; font-weight: bold; margin-bottom: 15px;">{service_date} at {service_time}</div>
+                                                            
+                                                            {f'<div style="font-size: 12px; color: #717171; text-transform: uppercase; font-weight: bold;">Reservation ID</div><div style="font-size: 16px; font-weight: bold;">{reservation_id}</div>' if reservation_id else ''}
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td align="center" style="padding-top: 40px;">
+                                                <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                                    <tr>
+                                                        <td align="center">
+                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Accept Task</a>
+                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Reject Task</a>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding-top: 30px; font-size: 14px; text-align: center; color: #717171;">
+                                                Please confirm your availability by clicking one of the buttons above.
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td bgcolor="#f7f7f7" style="padding: 30px 30px 30px 30px; color: #717171; font-size: 12px; text-align: center;">
+                                    <p style="margin: 0;">&copy; 2026 Vacation Rental Management. All rights reserved.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
         </body>
         </html>
         """
