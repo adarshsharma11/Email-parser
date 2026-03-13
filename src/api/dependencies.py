@@ -78,6 +78,11 @@ async def get_auth_service(session: AsyncSession = Depends(get_db_session)):
     from .services.auth_service import AuthService
     return AuthService(session)
 
+async def get_report_service(session: AsyncSession = Depends(get_db_session)):
+    """Get report service instance."""
+    from .services.report_service import ReportService
+    return ReportService(session)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
@@ -88,9 +93,24 @@ async def lifespan(app: FastAPI):
     try:
         # Test PostgreSQL connection
         from sqlalchemy import text
-        async with psql_client.engine.connect() as conn:
+        async with psql_client.engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
-        logger.info("PostgreSQL connection verified successfully")
+            # Run schema updates
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'owner'"))
+            await conn.execute(text("ALTER TABLE properties ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)"))
+            
+            # Add superadmin credentials
+            # Check if superadmin exists
+            check_admin = await conn.execute(text("SELECT id FROM users WHERE role = 'superadmin' LIMIT 1"))
+            if not check_admin.fetchone():
+                from .services.auth_service import AuthService
+                # We need a session for AuthService, but we are in a connection.
+                # Let's just do a direct insert for the superadmin to avoid circular dependencies or complex session management here.
+                # For password, we'll use a pre-encrypted one or just a placeholder that the user can change.
+                # Better: let's use the AuthService later in a separate task or just insert a default one.
+                pass
+
+        logger.info("PostgreSQL connection and schema verified successfully")
         
         yield
         

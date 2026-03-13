@@ -185,6 +185,7 @@ class RegisterRequest(BaseModel):
     last_name: str = Field(..., description="User last name")
     email: str = Field(..., description="User email")
     password: str = Field(..., description="User password")
+    role: Optional[str] = Field("owner", description="User role")
 
 class LoginRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -193,6 +194,15 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(APIResponse):
     data: Dict[str, Any] = Field(..., description="Auth data including token")
+
+class OwnerItem(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+
+class OwnerListResponse(APIResponse):
+    data: List[OwnerItem] = Field(..., description="List of owners")
 
 class ProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -231,8 +241,23 @@ class DashboardMetrics(BaseModel):
     guest_origins: List[Dict[str, Any]] = Field(default_factory=list, description="Guest origins statistics")
     priority_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="Priority tasks with status and due date")
 
+class DashboardExtendedMetrics(DashboardMetrics):
+    average_daily_rate: MetricTrend
+    overall_occupancy_rate: MetricTrend
+    pending_payments: MetricTrend
+    revenue_forecast: List[Dict[str, Any]]
+    revenue_trends: Dict[str, List[Dict[str, Any]]]
+    occupancy_by_property: List[Dict[str, Any]]
+    revenue_by_channel: List[Dict[str, Any]]
+    payment_collection: Dict[str, float]
+    upcoming_check_ins: List[Dict[str, Any]]
+    upcoming_check_outs: List[Dict[str, Any]]
+
 class DashboardResponse(APIResponse):
     data: DashboardMetrics | Dict[str, Any] = Field(..., description="Dashboard metrics")
+
+class DashboardExtendedResponse(APIResponse):
+    data: DashboardExtendedMetrics | Dict[str, Any] = Field(..., description="Dashboard extended metrics")
 
 
 # Activity Rule Models

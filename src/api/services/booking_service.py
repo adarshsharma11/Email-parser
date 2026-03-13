@@ -340,7 +340,7 @@ class BookingService:
             placeholders = ", ".join([f":{k}" for k in booking_dict.keys()])
             
             # Fields that we want to keep if the new one is null
-            coalesce_fields = {'total_amount', 'guest_email', 'guest_phone', 'property_name', 'property_id', 'nights', 'number_of_guests'}
+            coalesce_fields = {'total_amount', 'guest_email', 'guest_phone'}
             
             set_clause = []
             for k in booking_dict.keys():
@@ -348,8 +348,7 @@ class BookingService:
                     continue
                 if k in coalesce_fields:
                     set_clause.append(f"{k} = COALESCE(EXCLUDED.{k}, bookings.{k})")
-                else:
-                    set_clause.append(f"{k} = EXCLUDED.{k}")
+                # Do not update other fields if they already exist
             
             query = text(f"""
                 INSERT INTO bookings ({columns}) 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 import os
 from fastapi import Request
-from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse, ProfileUpdateRequest, ForgotPasswordRequest, ResetPasswordRequest
+from ..models import RegisterRequest, LoginRequest, AuthResponse, ErrorResponse, ProfileUpdateRequest, ForgotPasswordRequest, ResetPasswordRequest, OwnerListResponse
 from ..dependencies import get_logger, get_auth_service
 from ..services.auth_service import AuthService
 from ...guest_communications.email_client import EmailClient
@@ -15,10 +15,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(req: RegisterRequest, auth_service: AuthService = Depends(get_auth_service)):
     logger = get_logger()
     try:
-        saved = await auth_service.save_user(req.email, req.password, req.first_name, req.last_name)
-        token = create_token({"sub": req.email}, exp_seconds=86400)
-        logger.info("user_registered", email=req.email)
-        return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email}}
+        saved = await auth_service.save_user(req.email, req.password, req.first_name, req.last_name, role=req.role)
+        token = create_token({"sub": req.email, "role": saved["role"]}, exp_seconds=86400)
+        logger.info("user_registered", email=req.email, role=saved["role"])
+        return {"success": True, "message": "Registered", "data": {"token": token, "email": req.email, "role": saved["role"]}}
     except ValueError as ve:
         if str(ve) == "EMAIL_ALREADY_REGISTERED":
             raise HTTPException(status_code=400, detail={"message": "Email already registered"})
@@ -41,7 +41,7 @@ async def login(req: LoginRequest, auth_service: AuthService = Depends(get_auth_
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
         if decrypted != req.password:
             raise HTTPException(status_code=401, detail={"message": "Invalid credentials"})
-        token = create_token({"sub": req.email}, exp_seconds=86400)
+        token = create_token({"sub": req.email, "role": user.get("role")}, exp_seconds=86400)
         logger.info("user_logged_in", email=req.email)
         return {
             "success": True,
@@ -51,12 +51,21 @@ async def login(req: LoginRequest, auth_service: AuthService = Depends(get_auth_
                 "email": req.email,
                 "first_name": user.get("first_name"),
                 "last_name": user.get("last_name"),
+                "role": user.get("role"),
             },
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Login failed", "details": {"error": str(e)}})
+
+@router.get("/owners", response_model=OwnerListResponse, responses={500: {"model": ErrorResponse}})
+async def list_owners(auth_service: AuthService = Depends(get_auth_service)):
+    try:
+        owners = await auth_service.list_owners()
+        return {"success": True, "message": "Owners retrieved", "data": owners}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to fetch owners", "details": {"error": str(e)}})
 
 
 @router.post("/logout", response_model=AuthResponse, responses={401: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})

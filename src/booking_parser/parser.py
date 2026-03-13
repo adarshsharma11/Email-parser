@@ -29,8 +29,14 @@ class BookingParser:
                     r'Booked\s*by[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
                     r'Traveler\s*(?:Name)?[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
                 ],
-                'guest_phone': [r'Phone[:\s]*([0-9\-\+\(\)\s]{10,20})'],
-                'guest_email': [r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'],
+                'guest_phone': [
+                    r'Phone[:\s]*([0-9\-\+\(\)\s]{10,20})',
+                    r'Traveler\s*Phone[:\s]*([0-9\-\+\(\)\s]{10,25})',
+                ],
+                'guest_email': [
+                    r'Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+                    r'Traveler\s*Email[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+                ],
                 'property_id': [r'Property\s*(?:ID|#)[:\s]*([0-9\-]{5,20})'],
                 'property_name': [
                     r'Property\s+Name[:\s]*([A-Za-z0-9\s\-\.\']{3,80})',
@@ -38,12 +44,15 @@ class BookingParser:
                     r'Property\s*#(?:ID|#)?[:\s]*\d+\s+(.*?)(?:\s*\||$)',
                     r'([A-Za-z0-9\s\-\.\']{3,80})\s*\|\s*Property\s*#',
                     r'\bListing\b\s*(?:Name)?[:\s]*([A-Za-z0-9\s\-\.\']{3,80})',
+                    r'Unit[:\s]*([A-Za-z0-9\s\-\.\']{3,80})',
                 ],
                 'number_of_guests': [r'(?:Number\s*of\s*)?Guests?[:\s]*(\d+)'],
                 'total_amount': [
-                    r'(?i)(?:Total|Amount|Paid|Payout|Price)[:\s]*\$?([0-9,]+\.?[0-9]*)',
-                    r'(?i)Payment\s+received[:\s]*\$?([0-9,]+\.?[0-9]*)',
-                    r'(?i)Total\s+paid[:\s]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Total\s*traveler\s*payment[\s:]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Total\s*paid[\s:]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Payment\s+received[\s:]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)(?:Total|Amount|Paid|Payout|Price)[\s:]*\$?([0-9,]+\.?[0-9]*)',
+                    r'(?i)Booking\s*amount[\s:]*\$?([0-9,]+\.?[0-9]*)',
                 ]
             },
             Platform.AIRBNB: {
@@ -225,8 +234,8 @@ class BookingParser:
             subj_lower = subject.lower()
             content_lower = content.lower()
             
-            # 1. Check for explicit inquiry/request words
-            if any(k in subj_lower for k in ["inquiry", "question", "message from", "inquired", "request for money", "requested money"]):
+            # 1. Check for explicit inquiry/request/reply words
+            if any(k in subj_lower for k in ["inquiry", "question", "message from", "inquired", "request for money", "requested money", "replied to your message", "new message"]):
                 extracted_data["booking_type"] = "inquiry"
             elif "request" in subj_lower and not any(k in subj_lower for k in ["confirmed", "confirmation", "accepted"]):
                 extracted_data["booking_type"] = "inquiry"
@@ -312,9 +321,9 @@ class BookingParser:
                 body_prop_patterns = [
                     r'Property Name[:\s]+(.*?)(?:\r?\n|$)',
                     r'Listing Name[:\s]+(.*?)(?:\r?\n|$)',
-                    r'Unit[:\s]+(.*?)(?:\r?\n|$)',
                     r'Property[:\s]+(.*?)(?:\r?\n|$)',
-                    r'at\s+([A-Z][A-Za-z0-9\s\-\.\']{3,60})(?:\r?\n|$)',
+                    r'Unit[:\s]+(.*?)(?:\r?\n|$)',
+                    r'\bat\s+([A-Z][A-Za-z0-9\s\-\.\']{3,60})(?:\r?\n|$)',
                     r'RESERVATION\s+FOR\s+([A-Z][A-Za-z0-9\s\-\.\']{3,60})(?:\s*[,—–\-]|\r?\n|$)',
                 ]
                 for p in body_prop_patterns:
@@ -448,6 +457,9 @@ class BookingParser:
                 if match:
                     value = match.group(1).strip()
                     if value:
+                        if field == 'guest_phone':
+                            # Clean up phone number: remove all non-digit characters from the end
+                            value = re.sub(r'[^\d]+$', '', value).strip()
                         extracted_data[field] = value
                         break
         # ---- GUEST NAME FALLBACKS ----
