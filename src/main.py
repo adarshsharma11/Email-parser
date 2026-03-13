@@ -246,19 +246,37 @@ class BookingAutomation:
                 
                 # Sync to PostgreSQL
                 new_count = 0
-                processed_in_session = set() # To track duplicates in the current batch
+                
+                # Group successful bookings by stay to merge data from multiple emails
+                # (e.g. one email has phone, another has price)
+                grouped_bookings = {}
                 if successful_bookings:
                     for b in successful_bookings:
-                        try:
-                            # Session-level duplicate check (Property + Dates + Guest)
-                            pid_key = b.property_id or b.property_name
-                            session_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}_{b.guest_name}"
-                            if pid_key and b.check_in_date and b.check_out_date:
-                                if session_key in processed_in_session:
-                                      self.logger.info(f"Duplicate booking found in current batch for property {pid_key}, skipping.")
-                                      continue
-                                processed_in_session.add(session_key)
+                        # Session-level grouping key (Property + Dates + Guest)
+                        pid_key = b.property_id or b.property_name
+                        group_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}_{b.guest_name}"
+                        
+                        if group_key not in grouped_bookings:
+                            grouped_bookings[group_key] = b
+                        else:
+                            # Merge data: only guest_phone, guest_email, and total_amount
+                            fields_to_merge = [
+                                'guest_phone', 'guest_email', 'total_amount'
+                            ]
+                            for field in fields_to_merge:
+                                if getattr(existing_b, field) is None and getattr(b, field) is not None:
+                                    setattr(existing_b, field, getattr(b, field))
+                            
+                            # Special case for reservation_id: prefer non-email-id ones
+                            if existing_b.reservation_id == str(existing_b.email_id) and b.reservation_id != str(b.email_id):
+                                existing_b.reservation_id = b.reservation_id
+                            
+                            # Merge raw_data
+                            if isinstance(existing_b.raw_data, dict) and isinstance(b.raw_data, dict):
+                                existing_b.raw_data.update(b.raw_data)
 
+                    for group_key, b in grouped_bookings.items():
+                        try:
                             # Check for existing booking (By ID OR by Property+Dates)
                             existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
                             

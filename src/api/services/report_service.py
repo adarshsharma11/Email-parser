@@ -18,7 +18,7 @@ class ReportService:
             bookings = await self._fetch_filtered_bookings(from_date, to_date, property_ids, owner_ids)
             
             # 2. Fetch services for these bookings
-            booking_ids = [str(b.get("id")) for b in bookings if b.get("id")]
+            booking_ids = [str(b.get("reservation_id")) for b in bookings if b.get("reservation_id")]
             services = await self._fetch_services_for_bookings(booking_ids)
             
             # 3. Calculate actual days in period for occupancy
@@ -30,6 +30,7 @@ class ReportService:
 
             # 4. Group by property
             properties_data = {}
+            global_services_breakdown = {}
             total_rental_revenue = 0
             total_services_revenue = 0
             
@@ -56,7 +57,7 @@ class ReportService:
                         "services_breakdown": {}
                     }
                 
-                bid = str(b.get("id"))
+                bid = str(b.get("reservation_id"))
                 rev = float(b.get("total_amount") or 0)
                 nights = int(b.get("nights") or 1)
                 
@@ -74,13 +75,20 @@ class ReportService:
                 total_rental_revenue += rev
                 total_services_revenue += booking_services_rev
 
-                # Track specific services for breakdown
+                # Track specific services for breakdown (per property and global)
                 for s in booking_services:
                     s_name = s.get("service_name") or "Unknown Service"
+                    # Per property
                     if s_name not in properties_data[pid]["services_breakdown"]:
                         properties_data[pid]["services_breakdown"][s_name] = {"name": s_name, "count": 0, "revenue": 0}
                     properties_data[pid]["services_breakdown"][s_name]["count"] += 1
                     properties_data[pid]["services_breakdown"][s_name]["revenue"] += float(s.get("price") or 0)
+                    
+                    # Global
+                    if s_name not in global_services_breakdown:
+                        global_services_breakdown[s_name] = {"name": s_name, "count": 0, "revenue": 0}
+                    global_services_breakdown[s_name]["count"] += 1
+                    global_services_breakdown[s_name]["revenue"] += float(s.get("price") or 0)
 
                 # Format specific services for this individual booking
                 booking_services_list = []
@@ -126,6 +134,7 @@ class ReportService:
                 "period_start": from_date,
                 "period_end": to_date,
                 "properties": list(properties_data.values()),
+                "services_summary": list(global_services_breakdown.values()),
                 "rental_revenue": round(total_rental_revenue, 2),
                 "services_revenue": round(total_services_revenue, 2),
                 "total_revenue": round(total_rental_revenue + total_services_revenue, 2),
