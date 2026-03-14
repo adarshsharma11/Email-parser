@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import logging
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
@@ -493,3 +494,85 @@ class ReportService:
         
         result = await self.session.execute(text(query), params)
         return [dict(row._mapping) for row in result.fetchall()]
+
+    async def get_scheduled_reports(self) -> List[Dict[str, Any]]:
+        try:
+            query = text("SELECT * FROM scheduled_reports ORDER BY created_at DESC")
+            result = await self.session.execute(query)
+            reports = []
+            for row in result.fetchall():
+                report = dict(row._mapping)
+                # Convert DATE objects to strings for JSON serialization
+                if report.get("next_run"):
+                    report["next_run"] = report["next_run"].isoformat()
+                if report.get("last_run"):
+                    report["last_run"] = report["last_run"].isoformat()
+                if report.get("created_at"):
+                    report["created_at"] = report["created_at"].isoformat()
+                reports.append(report)
+            return reports
+        except Exception as e:
+            self.logger.error(f"Error fetching scheduled reports: {e}", exc_info=True)
+            raise
+
+    async def create_scheduled_report(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            # Calculate next run based on frequency
+            freq = data.get("frequency", "weekly")
+            now = datetime.utcnow().date()
+            if freq == "weekly":
+                next_run = now + timedelta(days=7)
+            elif freq == "monthly":
+                # Rough approximation for monthly
+                next_run = now + timedelta(days=30)
+            elif freq == "quarterly":
+                next_run = now + timedelta(days=90)
+            else:
+                next_run = now + timedelta(days=7)
+
+            query = text("""
+                INSERT INTO scheduled_reports 
+                (report_type, name, frequency, recipients, filters, next_run, is_active)
+                VALUES (:report_type, :name, :frequency, :recipients, :filters, :next_run, :is_active)
+                RETURNING *
+            """)
+            
+            params = {
+                "report_type": data.get("report_type"),
+                "name": data.get("name"),
+                "frequency": freq,
+                "recipients": data.get("recipients", []),
+                "filters": json.dumps(data.get("filters", {})),
+                "next_run": next_run,
+                "is_active": True
+            }
+            
+            result = await self.session.execute(query, params)
+            row = result.fetchone()
+            report = dict(row._mapping)
+            if report.get("next_run"):
+                report["next_run"] = report["next_run"].isoformat()
+            if report.get("created_at"):
+                report["created_at"] = report["created_at"].isoformat()
+            return report
+        except Exception as e:
+            self.logger.error(f"Error creating scheduled report: {e}", exc_info=True)
+            raise
+
+    async def delete_scheduled_report(self, report_id: int) -> bool:
+        try:
+            query = text("DELETE FROM scheduled_reports WHERE id = :id")
+            await self.session.execute(query, {"id": report_id})
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting scheduled report: {e}", exc_info=True)
+            raise
+
+    async def toggle_scheduled_report(self, report_id: int, is_active: bool) -> bool:
+        try:
+            query = text("UPDATE scheduled_reports SET is_active = :is_active, updated_at = CURRENT_TIMESTAMP WHERE id = :id")
+            await self.session.execute(query, {"id": report_id, "is_active": is_active})
+            return True
+        except Exception as e:
+            self.logger.error(f"Error toggling scheduled report: {e}", exc_info=True)
+            raise

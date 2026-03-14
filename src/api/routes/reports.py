@@ -95,3 +95,36 @@ async def get_service_provider_report(
 async def send_report_email(payload: dict):
     # Placeholder for email sending logic
     return {"success": True, "message": "Report email sent (placeholder)"}
+
+@router.get("/scheduled")
+async def get_scheduled_reports(service: ReportService = Depends(get_report_service)):
+    try:
+        data = await service.get_scheduled_reports()
+        return {"success": True, "message": "Scheduled reports retrieved", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to fetch scheduled reports", "details": {"error": str(e)}})
+
+@router.post("/scheduled")
+async def create_scheduled_report(payload: dict, service: ReportService = Depends(get_report_service)):
+    try:
+        data = await service.create_scheduled_report(payload)
+        return {"success": True, "message": "Report scheduled", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to schedule report", "details": {"error": str(e)}})
+
+@router.delete("/scheduled/{report_id}")
+async def delete_scheduled_report(report_id: int, service: ReportService = Depends(get_report_service)):
+    try:
+        await service.delete_scheduled_report(report_id)
+        return {"success": True, "message": "Scheduled report deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to delete scheduled report", "details": {"error": str(e)}})
+
+@router.patch("/scheduled/{report_id}")
+async def toggle_scheduled_report(report_id: int, payload: dict, service: ReportService = Depends(get_report_service)):
+    try:
+        is_active = payload.get("is_active", True)
+        await service.toggle_scheduled_report(report_id, is_active)
+        return {"success": True, "message": f"Report {'activated' if is_active else 'deactivated'}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"message": "Failed to update report status", "details": {"error": str(e)}})

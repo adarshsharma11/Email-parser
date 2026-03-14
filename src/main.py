@@ -252,28 +252,33 @@ class BookingAutomation:
                 grouped_bookings = {}
                 if successful_bookings:
                     for b in successful_bookings:
-                        # Session-level grouping key (Property + Dates + Guest)
+                        # Session-level grouping key (Property + Dates)
+                        # We use guest name in the key only if it's not "Unknown Guest"
                         pid_key = b.property_id or b.property_name
-                        group_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}_{b.guest_name}"
+                        if b.guest_name and b.guest_name != "Unknown Guest":
+                            group_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}_{b.guest_name}"
+                        else:
+                            group_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}"
                         
                         if group_key not in grouped_bookings:
-                            grouped_bookings[group_key] = b
+                            # Also check if we already have a grouping with the same property and dates but a different guest name
+                            # If so, and current is "Unknown Guest", skip it as it's likely a duplicate of the one with a name
+                            dates_key = f"{pid_key}_{b.check_in_date}_{b.check_out_date}"
+                            found_duplicate_by_dates = False
+                            for existing_key in grouped_bookings.keys():
+                                if existing_key.startswith(dates_key):
+                                    found_duplicate_by_dates = True
+                                    # Merge data into the one that already has a name
+                                    existing_b = grouped_bookings[existing_key]
+                                    self._merge_booking_data(existing_b, b)
+                                    break
+                            
+                            if not found_duplicate_by_dates:
+                                grouped_bookings[group_key] = b
                         else:
                             # Merge data: only guest_phone, guest_email, and total_amount
-                            fields_to_merge = [
-                                'guest_phone', 'guest_email', 'total_amount'
-                            ]
-                            for field in fields_to_merge:
-                                if getattr(existing_b, field) is None and getattr(b, field) is not None:
-                                    setattr(existing_b, field, getattr(b, field))
-                            
-                            # Special case for reservation_id: prefer non-email-id ones
-                            if existing_b.reservation_id == str(existing_b.email_id) and b.reservation_id != str(b.email_id):
-                                existing_b.reservation_id = b.reservation_id
-                            
-                            # Merge raw_data
-                            if isinstance(existing_b.raw_data, dict) and isinstance(b.raw_data, dict):
-                                existing_b.raw_data.update(b.raw_data)
+                            existing_b = grouped_bookings[group_key]
+                            self._merge_booking_data(existing_b, b)
 
                     for group_key, b in grouped_bookings.items():
                         try:
@@ -387,6 +392,23 @@ class BookingAutomation:
             self.logger.error("Error in email processing", error=str(e))
             return {'error': str(e)}
     
+    def _merge_booking_data(self, existing_b, new_b):
+        """Merge data from a new booking into an existing one."""
+        fields_to_merge = [
+            'guest_phone', 'guest_email', 'total_amount'
+        ]
+        for field in fields_to_merge:
+            if getattr(existing_b, field) is None and getattr(new_b, field) is not None:
+                setattr(existing_b, field, getattr(new_b, field))
+        
+        # Special case for reservation_id: prefer non-email-id ones
+        if existing_b.reservation_id == str(existing_b.email_id) and new_b.reservation_id != str(new_b.email_id):
+            existing_b.reservation_id = new_b.reservation_id
+        
+        # Merge raw_data
+        if isinstance(existing_b.raw_data, dict) and isinstance(new_b.raw_data, dict):
+            existing_b.raw_data.update(new_b.raw_data)
+
     def get_booking_stats(self) -> dict:
         """Get booking statistics from the database."""
         try:

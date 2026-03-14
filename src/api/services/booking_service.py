@@ -655,12 +655,17 @@ class BookingService:
                 "co": check_out
             }
 
-            if guest_name:
-                sql += " AND guest_name = :gn"
-                params["gn"] = guest_name
+            # If we have a real guest name, try to match it specifically first
+            if guest_name and guest_name != "Unknown Guest":
+                specific_sql = sql + " AND guest_name = :gn LIMIT 1"
+                specific_params = {**params, "gn": guest_name}
+                result = await self.session.execute(text(specific_sql), specific_params)
+                row = result.fetchone()
+                if row:
+                    return dict(row._mapping)
 
+            # Fallback: Match by property and dates only (very likely a duplicate even if guest name is missing/wrong)
             sql += " LIMIT 1"
-            
             result = await self.session.execute(text(sql), params)
             row = result.fetchone()
             return dict(row._mapping) if row else None
