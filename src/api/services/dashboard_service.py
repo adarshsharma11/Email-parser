@@ -234,7 +234,7 @@ class DashboardService:
 
     async def _get_upcoming_check_ins(self) -> List[Dict[str, Any]]:
         now = datetime.utcnow().date()
-        query = f"SELECT id, guest_name, property_name, check_in_date FROM {app_config.bookings_collection} WHERE check_in_date >= :now ORDER BY check_in_date ASC LIMIT 5"
+        query = f"SELECT reservation_id, guest_name, property_name, check_in_date FROM {app_config.bookings_collection} WHERE check_in_date >= :now ORDER BY check_in_date ASC LIMIT 5"
         result = await self.session.execute(text(query), {"now": now})
         rows = result.fetchall()
         return [{
@@ -250,7 +250,7 @@ class DashboardService:
 
     async def _get_upcoming_check_outs(self) -> List[Dict[str, Any]]:
         now = datetime.utcnow().date()
-        query = f"SELECT id, guest_name, property_name, check_out_date FROM {app_config.bookings_collection} WHERE check_out_date >= :now ORDER BY check_out_date ASC LIMIT 5"
+        query = f"SELECT reservation_id, guest_name, property_name, check_out_date FROM {app_config.bookings_collection} WHERE check_out_date >= :now ORDER BY check_out_date ASC LIMIT 5"
         result = await self.session.execute(text(query), {"now": now})
         rows = result.fetchall()
         return [{
