@@ -1,46 +1,49 @@
-# Core dependencies
-# supabase==2.7.4 (migrating to psql)
+# Database
 asyncpg==0.29.0
-sqlalchemy[asyncio]==2.0.23
+sqlalchemy[asyncio]==2.0.25
 psycopg2-binary==2.9.9
-python-dotenv==1.0.0
 alembic==1.13.1
+
+# Environment
+python-dotenv==1.0.1
+
+# CLI utilities
 colorama==0.4.6
 click==8.1.7
 
 # Email processing
 imaplib2==3.6
-email-validator==2.0.0
+email-validator==2.1.0
 
-# HTML parsing and data extraction
-beautifulsoup4==4.12.2
-lxml==4.9.3
-regex==2023.8.8
+# HTML parsing
+beautifulsoup4==4.12.3
+lxml==5.1.0
+regex==2024.5.15
 
-# Date and time handling
-python-dateutil==2.8.2
-pytz==2023.3
+# Date/time
+python-dateutil==2.9.0
+pytz==2024.1
 
-# Logging and monitoring
-structlog==23.1.0
+# Logging
+structlog==24.1.0
+
+# FastAPI stack
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+pydantic-settings==2.2.1
+python-multipart==0.0.9
+cryptography==42.0.5
+
+# SMS notifications
+twilio==9.0.4
 
 # Testing
-pytest==7.4.2
-pytest-mock==3.11.1
-pytest-cov==4.1.0
+pytest==8.2.0
+pytest-mock==3.14.0
+pytest-cov==5.0.0
 
-# FastAPI and web framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-python-multipart==0.0.6
-cryptography==41.0.5
-
-# Development and linting
-black==23.7.0
-flake8==6.0.0
-mypy==1.5.1
-
-# Twilio for SMS notifications
-twilio==9.2.3
+# Development tools
+black==24.4.0
+flake8==7.0.0
+mypy==1.10.0

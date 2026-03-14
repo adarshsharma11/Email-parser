@@ -211,7 +211,8 @@ class BookingService:
                                 booking_id=request.reservation_id,
                                 property_id=request.property_name or request.property_id or "Unknown",
                                 scheduled_date=scheduled_date,
-                                crew_id=crew.get("id")
+                                crew_id=crew.get("id"),
+                                category_id=crew.get("category_id")
                             )
                             
                             if task:
@@ -552,7 +553,7 @@ class BookingService:
             self.logger.error(f"Failed to send manual welcome email: {e}", exc_info=True)
             return APIResponse(success=False, message=f"Error: {str(e)}")
 
-    async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None, category_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:
             # Ensure reservation_id is passed as a string (the column type is text)
             res_id_val = str(booking_id)
@@ -561,11 +562,12 @@ class BookingService:
                 "reservation_id": res_id_val,
                 "property_id": property_id,
                 "scheduled_date": scheduled_date,
-                "crew_id": crew_id
+                "crew_id": crew_id,
+                "category_id": category_id
             }
             query = text("""
-                INSERT INTO cleaning_tasks (reservation_id, property_id, scheduled_date, crew_id)
-                VALUES (:reservation_id, :property_id, :scheduled_date, :crew_id)
+                INSERT INTO cleaning_tasks (reservation_id, property_id, scheduled_date, crew_id, category_id)
+                VALUES (:reservation_id, :property_id, :scheduled_date, :crew_id, :category_id)
                 RETURNING *
             """)
             result = await self.session.execute(query, payload)
