@@ -329,3 +329,57 @@ class ActivityRuleLog(BaseModel):
 class ActivityRuleLogListResponse(APIResponse):
     """Response model for list of activity rule logs."""
     data: List[ActivityRuleLog] = Field(..., description="List of activity rule logs")
+
+
+# Pricing Models
+class PricingSettings(BaseModel):
+    """Global pricing settings."""
+    model_config = ConfigDict(frozen=True, extra="ignore")
+    weekend_boost: float = Field(20.0, description="0-50% boost for Fri/Sat")
+    seasonal_strength: float = Field(75.0, description="0-100% how much to follow seasonal patterns")
+    island_discount: float = Field(10.0, description="0-30% base discount for island dates")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+
+class PricingSettingsResponse(APIResponse):
+    """Response model for pricing settings."""
+    data: PricingSettings = Field(..., description="Pricing settings")
+
+class PricingRuleBase(BaseModel):
+    """Base model for Pricing Rule."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    
+    property_id: Optional[str] = Field(None, description="Target property ID (null for all)")
+    rule_name: str = Field(..., description="Name of the rule")
+    rule_type: str = Field(..., description="seasonal, holiday, weekend, island, last_minute")
+    multiplier: float = Field(1.0, description="Price multiplier")
+    discount_percentage: Optional[float] = Field(None, description="Discount percentage")
+    start_date: Optional[datetime] = Field(None, description="Start date for seasonal/holiday")
+    end_date: Optional[datetime] = Field(None, description="End date for seasonal/holiday")
+    status: bool = Field(True, description="Enabled/Disabled")
+
+class CreatePricingRuleRequest(PricingRuleBase):
+    """Request model for creating a pricing rule."""
+    pass
+
+class PricingRuleResponse(PricingRuleBase):
+    """Response model for pricing rule."""
+    id: int = Field(..., description="Unique identifier")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Update timestamp")
+
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime) -> str:
+        return created_at.isoformat()
+
+    @field_serializer('updated_at')
+    def serialize_updated_at(self, updated_at: Optional[datetime]) -> Optional[str]:
+        return updated_at.isoformat() if updated_at else None
+
+class PricingRuleListResponse(APIResponse):
+    """Response model for list of pricing rules."""
+    data: List[PricingRuleResponse] = Field(..., description="List of pricing rules")
+
+class PricingRuleDetailResponse(APIResponse):
+    """Response model for single pricing rule."""
+    data: PricingRuleResponse = Field(..., description="Pricing rule details")
+

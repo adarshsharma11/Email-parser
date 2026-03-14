@@ -121,8 +121,18 @@ class BookingParser:
         # Words to exclude from certain fields
         self.exclude_words = {
             'reservation_id': {'FOR', 'ID', 'RESERVATION', 'CONFIRMATION', 'BOOKING', 'NONE', 'NULL', 'UNDEFINED', 'REMINDER', 'CONFIRMED', 'THUMBNAIL', 'CONTAINER', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'TYPE', 'AMOUNT', 'LISTING', 'NUMBER'},
-            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO', 'PAID'},
-            'property_name': {'THUMBNAIL', 'CONTAINER', 'DETAILS', 'ITINERARY', 'RESERVATION', 'BOOKING', 'CONFIRMATION', 'ACCEPTED', 'REQUESTED', 'SENT', 'USD', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'PAYMENT', 'INVOICE', 'THUMBNAILCONTAINER', 'PROTECTION POLICY', 'GUEST PAID', 'HOST PAYOUT', 'PAYOUT', 'RESPOND', 'INQUIRY', 'REQUEST', 'MESSAGE', 'REPLY', 'FREQUENTLY ASKED QUESTIONS', 'FAQ', 'SUPPORT', 'HELP', 'OPENTRACK', 'TRACKING'},
+            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO', 'PAID', 'AIRBNB', 'VRBO', 'BOOKING', 'PLUM', 'MESSAGE', 'REPLY', 'INQUIRY'},
+            'property_name': {'THUMBNAIL', 'CONTAINER', 'DETAILS', 'ITINERARY', 'RESERVATION', 'BOOKING', 'CONFIRMATION', 'ACCEPTED', 'REQUESTED', 'SENT', 'USD', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'PAYMENT', 'INVOICE', 'THUMBNAILCONTAINER', 'PROTECTION POLICY', 'GUEST PAID', 'HOST PAYOUT', 'PAYOUT', 'RESPOND', 'INQUIRY', 'REQUEST', 'MESSAGE', 'REPLY', 'FREQUENTLY ASKED QUESTIONS', 'FAQ', 'SUPPORT', 'HELP', 'OPENTRACK', 'TRACKING', 'GMAIL', 'INBOX', 'AIRBNB', 'VRBO', 'BOOKING', 'PLUM'},
+        }
+
+        # List of generic names or phrases that are NOT guest names
+        self.invalid_guest_names = {
+            'EXPERIENCE TEAM REPLY', 'AIRBNB SUPPORT', 'RELATIONS BOOK NOW', 
+            'UNKNOWN GUEST', 'GUEST', 'TRAVELER', 'BOOKER', 'FAVORITE',
+            'JOSHUA TREE MANSION', 'ICONIC DESERT ESCAPE', 'AVANTSTAY',
+            'REPLYING TO YOUR MESSAGE', 'NEW MESSAGE', 'ACCOUNT ACTIVITY',
+            'YOUR INSTINCTS WERE RIGHT', 'WRITE A REVIEW', 'REMINDER TO WRITE',
+            'AIRBNB SUPPORT TEAM', 'GUEST SERVICES', 'CUSTOMER SUPPORT'
         }
 
     def parse_email(self, email_data: EmailData) -> ProcessingResult:
@@ -802,7 +812,10 @@ class BookingParser:
                 elif key == 'guest_name':
                     # Clean up guest name
                     upper_val = value.upper()
-                    if upper_val in self.exclude_words.get('guest_name', set()) or len(value) < 2:
+                    if upper_val in self.exclude_words.get('guest_name', set()) or upper_val in self.invalid_guest_names or len(value) < 2:
+                        value = None
+                    elif any(word in upper_val for word in self.invalid_guest_names):
+                        # If it contains an invalid phrase like "EXPERIENCE TEAM REPLY", reject it
                         value = None
                     elif any(word in upper_val for word in ['LISTING', 'NUMBER', 'RESERVATION', 'ID', 'TYPE', 'AMOUNT']):
                         junk_count = sum(1 for word in ['LISTING', 'NUMBER', 'RESERVATION', 'ID', 'TYPE', 'AMOUNT'] if word in upper_val)

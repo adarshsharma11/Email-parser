@@ -99,6 +99,49 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'owner'"))
             await conn.execute(text("ALTER TABLE properties ADD COLUMN IF NOT EXISTS owner_id INTEGER REFERENCES users(id)"))
             
+            # Add pricing tables
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pricing_settings (
+                    id INTEGER PRIMARY KEY,
+                    weekend_boost FLOAT DEFAULT 20.0,
+                    seasonal_strength FLOAT DEFAULT 75.0,
+                    island_discount FLOAT DEFAULT 10.0,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS pricing_rules (
+                    id SERIAL PRIMARY KEY,
+                    property_id TEXT,
+                    rule_name TEXT NOT NULL,
+                    rule_type TEXT NOT NULL,
+                    multiplier FLOAT DEFAULT 1.0,
+                    discount_percentage FLOAT,
+                    start_date TIMESTAMP WITH TIME ZONE,
+                    end_date TIMESTAMP WITH TIME ZONE,
+                    status BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+
+            # Add scheduled reports table
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS scheduled_reports (
+                    id SERIAL PRIMARY KEY,
+                    report_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    frequency TEXT NOT NULL,
+                    recipients TEXT[] NOT NULL,
+                    filters JSONB NOT NULL,
+                    next_run DATE,
+                    last_run DATE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE
+                )
+            """))
+            
             # Add superadmin credentials
             # Check if superadmin exists
             check_admin = await conn.execute(text("SELECT id FROM users WHERE role = 'superadmin' LIMIT 1"))
