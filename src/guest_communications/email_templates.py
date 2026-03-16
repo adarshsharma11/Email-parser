@@ -1,4 +1,5 @@
 from ..api.config import settings
+import time
 
 class EmailTemplates:
     @staticmethod
@@ -84,9 +85,11 @@ class EmailTemplates:
 
     @staticmethod
     def get_cleaning_template(crew_name: str, property_name: str, scheduled_date: str, task_id: str, guest_details: str = "") -> str:
-        api_base = f"{settings.api_base_url}{settings.api_prefix}/{settings.api_version}/service-bookings/respond"
-        accept_url = f"{api_base}?task_id={task_id}&type=cleaning&action=accept"
-        reject_url = f"{api_base}?task_id={task_id}&type=cleaning&action=reject"
+        api_base = f"{settings.api_base_url}/service-bookings/respond"
+        # 4 hour expiration (14400 seconds)
+        expires_at = int(time.time()) + 14400
+        accept_url = f"{api_base}?task_id={task_id}&type=cleaning&action=accept&expires_at={expires_at}"
+        reject_url = f"{api_base}?task_id={task_id}&type=cleaning&action=reject&expires_at={expires_at}"
         
         return f"""
         <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -139,9 +142,13 @@ class EmailTemplates:
                                             <td align="center" style="padding-top: 40px;">
                                                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                     <tr>
+                                                        <td align="center" style="padding-bottom: 20px;">
+                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; min-width: 120px; text-align: center;">Accept Task</a>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
                                                         <td align="center">
-                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Accept Task</a>
-                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Reject Task</a>
+                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; min-width: 120px; text-align: center;">Reject Task</a>
                                                         </td>
                                                     </tr>
                                                 </table>
@@ -149,7 +156,8 @@ class EmailTemplates:
                                         </tr>
                                         <tr>
                                             <td style="padding-top: 30px; font-size: 14px; text-align: center; color: #717171;">
-                                                Please confirm your availability by clicking one of the buttons above.
+                                                Please confirm your availability by clicking one of the buttons above.<br/>
+                                                <em>Note: These links will expire in 4 hours.</em>
                                             </td>
                                         </tr>
                                     </table>
@@ -170,9 +178,11 @@ class EmailTemplates:
 
     @staticmethod
     def get_service_template(provider_name: str, service_name: str, property_name: str, service_date: str, service_time: str, task_id: str, reservation_id: str = "") -> str:
-        api_base = f"{settings.api_base_url}{settings.api_prefix}/{settings.api_version}/service-bookings/respond"
-        accept_url = f"{api_base}?task_id={task_id}&type=service&action=accept"
-        reject_url = f"{api_base}?task_id={task_id}&type=service&action=reject"
+        api_base = f"{settings.api_base_url}/service-bookings/respond"
+        # 4 hour expiration (14400 seconds)
+        expires_at = int(time.time()) + 14400
+        accept_url = f"{api_base}?task_id={task_id}&type=service&action=accept&expires_at={expires_at}"
+        reject_url = f"{api_base}?task_id={task_id}&type=service&action=reject&expires_at={expires_at}"
         
         return f"""
         <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -229,9 +239,13 @@ class EmailTemplates:
                                             <td align="center" style="padding-top: 40px;">
                                                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                                                     <tr>
+                                                        <td align="center" style="padding-bottom: 20px;">
+                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; min-width: 120px; text-align: center;">Accept Task</a>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
                                                         <td align="center">
-                                                            <a href="{accept_url}" style="background-color: #28a745; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Accept Task</a>
-                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; margin: 0 10px;">Reject Task</a>
+                                                            <a href="{reject_url}" style="background-color: #dc3545; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; min-width: 120px; text-align: center;">Reject Task</a>
                                                         </td>
                                                     </tr>
                                                 </table>
@@ -239,7 +253,8 @@ class EmailTemplates:
                                         </tr>
                                         <tr>
                                             <td style="padding-top: 30px; font-size: 14px; text-align: center; color: #717171;">
-                                                Please confirm your availability by clicking one of the buttons above.
+                                                Please confirm your availability by clicking one of the buttons above.<br/>
+                                                <em>Note: These links will expire in 4 hours.</em>
                                             </td>
                                         </tr>
                                     </table>
