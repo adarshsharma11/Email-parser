@@ -195,11 +195,11 @@ class BookingLogger:
         print(f"\n{Fore.CYAN}{'='*50}")
         print(f"{Fore.WHITE}PROCESSING SUMMARY")
         print(f"{Fore.CYAN}{'='*50}")
-        print(f"{Fore.GREEN}✓ Emails processed: {self.stats['emails_processed']}")
-        print(f"{Fore.GREEN}✓ Bookings parsed: {self.stats['bookings_parsed']}")
-        print(f"{Fore.BLUE}✓ New bookings: {self.stats['new_bookings']}")
-        print(f"{Fore.YELLOW}⚠ Duplicate bookings: {self.stats['duplicate_bookings']}")
-        print(f"{Fore.RED}✗ Errors: {self.stats['errors']}")
+        print(f"{Fore.GREEN}* Emails processed: {self.stats['emails_processed']}")
+        print(f"{Fore.GREEN}* Bookings parsed: {self.stats['bookings_parsed']}")
+        print(f"{Fore.BLUE}* New bookings: {self.stats['new_bookings']}")
+        print(f"{Fore.YELLOW}! Duplicate bookings: {self.stats['duplicate_bookings']}")
+        # print(f"{Fore.RED}X Errors: {self.stats['errors']}")
         
         if self.stats['platforms']:
             print(f"\n{Fore.WHITE}By Platform:")
