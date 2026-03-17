@@ -794,3 +794,64 @@ class ReportService:
         except Exception as e:
             self.logger.error(f"Error toggling scheduled report: {e}", exc_info=True)
             raise
+
+    async def run_scheduled_reports(self):
+        try:
+            query = text("""
+                SELECT * FROM scheduled_reports
+                WHERE is_active = true
+                AND next_run <= CURRENT_DATE
+            """)
+            result = await self.session.execute(query)
+            reports = result.fetchall()
+
+            for row in reports:
+                report = dict(row._mapping)
+
+                report_type = report.get("report_type")
+                filters = json.loads(report.get("filters", "{}"))
+
+                from_date = filters.get("from")
+                to_date = filters.get("to")
+
+                data = None
+
+                # ✅ Report type ke hisaab se function call
+                if report_type == "booking":
+                    data = await self.get_booking_summary(from_date, to_date)
+                elif report_type == "occupancy":
+                    data = await self.get_occupancy_report(from_date, to_date)
+                elif report_type == "owner":
+                    data = await self.get_owner_statement(from_date, to_date)
+
+                # 👉 (Future: yahan email bhejna hai)
+                print(f"Running report: {report.get('name')}")
+
+                # ✅ Next run calculate
+                next_run = self._calculate_next_run(report.get("frequency"))
+
+                update_query = text("""
+                    UPDATE scheduled_reports
+                    SET last_run = CURRENT_TIMESTAMP,
+                        next_run = :next_run
+                    WHERE id = :id
+                """)
+
+                await self.session.execute(update_query, {
+                    "next_run": next_run,
+                    "id": report.get("id")
+                })
+
+        except Exception as e:
+            self.logger.error(f"Error running scheduled reports: {e}", exc_info=True)
+            raise
+
+    def _calculate_next_run(self, freq: str):
+        now = datetime.utcnow().date()
+        if freq == "weekly":
+            return now + timedelta(days=7)
+        elif freq == "monthly":
+            return now + timedelta(days=30)
+        elif freq == "quarterly":
+            return now + timedelta(days=90)
+        return now + timedelta(days=7)

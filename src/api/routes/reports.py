@@ -141,3 +141,12 @@ async def toggle_scheduled_report(report_id: int, payload: dict, service: Report
         return {"success": True, "message": f"Report {'activated' if is_active else 'deactivated'}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Failed to update report status", "details": {"error": str(e)}})
+
+
+@router.get("/internal/run-scheduled-reports")
+async def run_scheduled_reports(service: ReportService = Depends(get_report_service)):
+    try:
+        await service.run_scheduled_reports()
+        return {"success": True, "message": "Scheduled reports executed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
