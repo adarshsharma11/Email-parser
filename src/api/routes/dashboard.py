@@ -25,3 +25,6 @@ async def get_dashboard_extended(
         return {"success": True, "message": "Extended dashboard metrics", "data": DashboardExtendedMetrics(**data)}
     except Exception as e:
         raise HTTPException(status_code=500, detail={"message": "Failed to fetch extended dashboard metrics", "details": {"error": str(e)}})
+    
+
+    
