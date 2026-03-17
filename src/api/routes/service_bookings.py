@@ -7,6 +7,7 @@ import logging
 import asyncio
 import json
 from datetime import datetime
+import time
 
 router = APIRouter(prefix="/service-bookings", tags=["service-bookings"])
 logger = logging.getLogger(__name__)
@@ -15,12 +16,20 @@ logger = logging.getLogger(__name__)
 async def respond_to_task(
     task_id: str = Query(..., description="Task ID"),
     type: str = Query(..., description="Task type (cleaning or service)"),
-    action: str = Query(..., description="Action (accept or reject)")
+    action: str = Query(..., description="Action (accept or reject)"),
+    expires_at: Optional[int] = Query(None, description="Expiration timestamp")
 ):
     """
     Handle task response from crew or service provider.
     """
     try:
+        # Check if the link has expired
+        if expires_at and int(time.time()) > expires_at:
+            raise HTTPException(
+                status_code=410, 
+                detail="This link has expired. Please contact management for a new assignment."
+            )
+
         if action not in ["accept", "reject"]:
             raise HTTPException(status_code=400, detail="Invalid action")
         
@@ -76,6 +85,8 @@ async def respond_to_task(
             "status": status
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error responding to task: {e}")
         raise HTTPException(status_code=500, detail=str(e))
