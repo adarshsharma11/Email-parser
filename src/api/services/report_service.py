@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 import logging
 import json
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
@@ -308,47 +309,92 @@ class ReportService:
 
     async def get_service_revenue(self, from_date: str, to_date: str, property_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         try:
-            # Simplified mock for service revenue matching frontend interface
+            # 1. Fetch current period data
+            bookings = await self._fetch_filtered_bookings(from_date, to_date, property_ids)
+            booking_ids = [str(b.get("reservation_id")) for b in bookings if b.get("reservation_id")]
+            services = await self._fetch_services_for_bookings(booking_ids)
+            
+            # 2. Fetch previous period for trends
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d").date()
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d").date()
+            days_in_period = (to_dt - from_dt).days + 1
+            prev_to_dt = from_dt - timedelta(days=1)
+            prev_from_dt = prev_to_dt - timedelta(days=days_in_period - 1)
+            
+            prev_bookings = await self._fetch_filtered_bookings(prev_from_dt.strftime("%Y-%m-%d"), prev_to_dt.strftime("%Y-%m-%d"), property_ids)
+            prev_booking_ids = [str(b.get("reservation_id")) for b in prev_bookings if b.get("reservation_id")]
+            prev_services = await self._fetch_services_for_bookings(prev_booking_ids)
+            
+            total_rev = sum(float(s.get("price") or 0) for s in services)
+            prev_total_rev = sum(float(s.get("price") or 0) for s in prev_services)
+            
+            # 3. Group by service name
+            service_stats = {}
+            for s in services:
+                name = s.get("service_name") or "Unknown"
+                if name not in service_stats:
+                    service_stats[name] = {
+                        "service_type": "Service", # Placeholder as we don't have explicit type
+                        "service_name": name,
+                        "total_revenue": 0,
+                        "bookings_count": 0,
+                        "average_price": 0,
+                        "trend": 0
+                    }
+                service_stats[name]["total_revenue"] += float(s.get("price") or 0)
+                service_stats[name]["bookings_count"] += 1
+
+            # Calculate trends for services
+            prev_service_stats = {}
+            for s in prev_services:
+                name = s.get("service_name") or "Unknown"
+                if name not in prev_service_stats:
+                    prev_service_stats[name] = 0
+                prev_service_stats[name] += float(s.get("price") or 0)
+
+            for name, stats in service_stats.items():
+                stats["average_price"] = round(stats["total_revenue"] / stats["bookings_count"], 2) if stats["bookings_count"] > 0 else 0
+                prev_rev = prev_service_stats.get(name, 0)
+                if prev_rev > 0:
+                    stats["trend"] = round(((stats["total_revenue"] - prev_rev) / prev_rev * 100), 2)
+                else:
+                    stats["trend"] = 100 if stats["total_revenue"] > 0 else 0
+
+            # 4. Group by month
+            by_month = {}
+            for s in services:
+                # Need to find the booking date for this service
+                # The service object doesn't have the date directly, but we can find it from booking_ids
+                # Actually, bs.service_date is in the table but not fetched in _fetch_services_for_bookings
+                # Let's use the month of the service_date if available, else fallback to booking check-in
+                month = s.get("service_date").strftime("%b") if s.get("service_date") else "Unknown"
+                if month not in by_month:
+                    by_month[month] = {"month": month, "revenue": 0, "bookings": 0}
+                by_month[month]["revenue"] += float(s.get("price") or 0)
+                by_month[month]["bookings"] += 1
+
+            # 5. Group by property
+            prop_stats = {}
+            # Need to map booking_id to property info
+            booking_prop_map = {str(b["reservation_id"]): {"id": str(b.get("property_id")), "name": b.get("property_name") or "Unknown"} for b in bookings}
+            
+            for s in services:
+                bid = str(s.get("booking_id"))
+                p_info = booking_prop_map.get(bid, {"id": "Unknown", "name": "Unknown"})
+                pid = p_info["id"]
+                if pid not in prop_stats:
+                    prop_stats[pid] = {"property_id": pid, "property_name": p_info["name"], "revenue": 0, "bookings": 0}
+                prop_stats[pid]["revenue"] += float(s.get("price") or 0)
+                prop_stats[pid]["bookings"] += 1
+
             return {
                 "period_start": from_date,
                 "period_end": to_date,
-                "total_revenue": 4500.0,
-                "total_bookings": 26,
-                "services": [
-                    {
-                        "service_type": "Culinary",
-                        "service_name": "Private Chef",
-                        "total_revenue": 2500,
-                        "bookings_count": 15,
-                        "average_price": 166.67,
-                        "trend": 12.5
-                    },
-                    {
-                        "service_type": "Wellness",
-                        "service_name": "Spa & Massage",
-                        "total_revenue": 1200,
-                        "bookings_count": 8,
-                        "average_price": 150.0,
-                        "trend": -5.2
-                    },
-                    {
-                        "service_type": "Adventure",
-                        "service_name": "Ski Guide",
-                        "total_revenue": 800,
-                        "bookings_count": 3,
-                        "average_price": 266.67,
-                        "trend": 24.1
-                    }
-                ],
-                "by_month": [
-                    {"month": "Jan", "revenue": 3800, "bookings": 20},
-                    {"month": "Feb", "revenue": 4500, "bookings": 26}
-                ],
-                "top_properties": [
-                    {"property_id": "1", "property_name": "Ocean View Villa", "revenue": 2200, "bookings": 12},
-                    {"property_name": "Mountain Retreat", "property_id": "2", "revenue": 1500, "bookings": 8},
-                    {"property_name": "Downtown Loft", "property_id": "3", "revenue": 800, "bookings": 6}
-                ]
+                "total_revenue": round(total_rev, 2),
+                "total_bookings": len(services),
+                "services": list(service_stats.values()),
+                "by_month": list(by_month.values()),
+                "top_properties": sorted(list(prop_stats.values()), key=lambda x: x["revenue"], reverse=True)[:5]
             }
         except Exception as e:
             self.logger.error(f"Error generating service revenue report: {e}", exc_info=True)
@@ -356,63 +402,144 @@ class ReportService:
 
     async def get_performance_report(self, from_date: str, to_date: str, property_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         try:
-            # Simplified mock for performance matching frontend interface
+            # 1. Calculate periods
+            from_dt = datetime.strptime(from_date, "%Y-%m-%d").date()
+            to_dt = datetime.strptime(to_date, "%Y-%m-%d").date()
+            days_in_period = (to_dt - from_dt).days + 1
+            
+            prev_to_dt = from_dt - timedelta(days=1)
+            prev_from_dt = prev_to_dt - timedelta(days=days_in_period - 1)
+            
+            prev_from_date = prev_from_dt.strftime("%Y-%m-%d")
+            prev_to_date = prev_to_dt.strftime("%Y-%m-%d")
+
+            # 2. Fetch properties count for occupancy calculation
+            prop_query = f"SELECT COUNT(*) FROM {app_config.properties_collection}"
+            prop_params = {}
+            if property_ids:
+                prop_query += " WHERE id::text = ANY(:pids) OR name = ANY(:pids)"
+                prop_params["pids"] = list(property_ids)
+            
+            prop_res = await self.session.execute(text(prop_query), prop_params)
+            num_properties = prop_res.scalar() or 1
+
+            # 3. Fetch bookings for both periods
+            current_bookings = await self._fetch_filtered_bookings(from_date, to_date, property_ids)
+            previous_bookings = await self._fetch_filtered_bookings(prev_from_date, prev_to_date, property_ids)
+
+            def calculate_metrics(bookings, start_date, end_date, label):
+                total_rev = sum(float(b.get("total_amount") or 0) for b in bookings)
+                total_bookings = len(bookings)
+                
+                # Calculate nights from check-in and check-out if 'nights' is 0 or missing
+                total_nights = 0
+                for b in bookings:
+                    n = int(b.get("nights") or 0)
+                    if n <= 0:
+                        try:
+                            check_in = b.get("check_in_date")
+                            check_out = b.get("check_out_date")
+                            if check_in and check_out:
+                                # Ensure we have date objects
+                                if isinstance(check_in, str):
+                                    check_in = datetime.strptime(check_in, "%Y-%m-%d").date()
+                                if isinstance(check_out, str):
+                                    check_out = datetime.strptime(check_out, "%Y-%m-%d").date()
+                                
+                                diff = (check_out - check_in).days
+                                n = max(0, diff)
+                        except (ValueError, TypeError, AttributeError):
+                            n = 1 # Fallback to 1 night per booking if calculation fails
+                    total_nights += n
+                
+                adr = total_rev / total_nights if total_nights > 0 else 0
+                
+                # Occupancy = booked nights / (days in period * number of properties)
+                total_possible_nights = days_in_period * num_properties
+                occupancy = (total_nights / total_possible_nights * 100) if total_possible_nights > 0 else 0
+                
+                return {
+                    "start": start_date,
+                    "end": end_date,
+                    "label": label,
+                    "total_revenue": round(total_rev, 2),
+                    "total_bookings": total_bookings,
+                    "average_daily_rate": round(adr, 2),
+                    "occupancy_rate": round(occupancy, 2),
+                    "total_nights": total_nights
+                }
+
+            current_metrics = calculate_metrics(current_bookings, from_date, to_date, "Current Period")
+            previous_metrics = calculate_metrics(previous_bookings, prev_from_date, prev_to_date, "Previous Period")
+
+            # 4. Metrics Comparison
+            def get_comparison(metric_name, current_val, previous_val):
+                change = current_val - previous_val
+                change_pct = (change / previous_val * 100) if previous_val != 0 else (100 if current_val > 0 else 0)
+                return {
+                    "metric": metric_name,
+                    "current_value": current_val,
+                    "previous_value": previous_val,
+                    "change": round(change, 2),
+                    "change_percentage": round(change_pct, 2),
+                    "trend": "up" if change > 0 else "down" if change < 0 else "neutral"
+                }
+
+            metrics_comparison = [
+                get_comparison("Revenue", current_metrics["total_revenue"], previous_metrics["total_revenue"]),
+                get_comparison("Occupancy", current_metrics["occupancy_rate"], previous_metrics["occupancy_rate"]),
+                get_comparison("ADR", current_metrics["average_daily_rate"], previous_metrics["average_daily_rate"])
+            ]
+
+            # 5. Trend Data (Revenue and Occupancy)
+            # Group by date
+            rev_trend_map = {}
+            occ_trend_map = {}
+            
+            # Initialize with current period dates
+            for i in range(days_in_period):
+                d = (from_dt + timedelta(days=i)).strftime("%Y-%m-%d")
+                rev_trend_map[d] = {"date": d, "current": 0, "previous": 0}
+                occ_trend_map[d] = {"date": d, "current": 0, "previous": 0}
+
+            for b in current_bookings:
+                d_dt = b.get("check_in_date")
+                if d_dt:
+                    if isinstance(d_dt, datetime):
+                        d_dt = d_dt.date()
+                    d = d_dt.strftime("%Y-%m-%d")
+                    if d in rev_trend_map:
+                        rev_trend_map[d]["current"] += float(b.get("total_amount") or 0)
+                        occ_trend_map[d]["current"] += int(b.get("nights") or 0)
+
+            # Map previous period data to current period timeline for comparison
+            for b in previous_bookings:
+                # Find corresponding date in current period
+                b_dt = b.get("check_in_date")
+                if b_dt:
+                    # Ensure we are comparing dates, not datetimes
+                    if isinstance(b_dt, datetime):
+                        b_dt = b_dt.date()
+                    
+                    days_diff = (b_dt - prev_from_dt).days
+                    if 0 <= days_diff < days_in_period:
+                        target_dt = (from_dt + timedelta(days=days_diff)).strftime("%Y-%m-%d")
+                        if target_dt in rev_trend_map:
+                            rev_trend_map[target_dt]["previous"] += float(b.get("total_amount") or 0)
+                            occ_trend_map[target_dt]["previous"] += int(b.get("nights") or 0)
+
+            # Convert occ_trend_map counts to percentages
+            for d in occ_trend_map:
+                occ_trend_map[d]["current"] = round((occ_trend_map[d]["current"] / num_properties * 100), 2)
+                occ_trend_map[d]["previous"] = round((occ_trend_map[d]["previous"] / num_properties * 100), 2)
+
             return {
-                "current_period": {
-                    "start": from_date,
-                    "end": to_date,
-                    "label": "Current Period",
-                    "total_revenue": 25000,
-                    "total_bookings": 42,
-                    "average_daily_rate": 305,
-                    "occupancy_rate": 82,
-                    "total_nights": 125
-                },
-                "previous_period": {
-                    "start": "2024-01-01",
-                    "end": "2024-01-31",
-                    "label": "Previous Period",
-                    "total_revenue": 22000,
-                    "total_bookings": 38,
-                    "average_daily_rate": 295,
-                    "occupancy_rate": 78,
-                    "total_nights": 110
-                },
-                "comparison_type": "month",
-                "metrics_comparison": [
-                    {
-                        "metric": "Revenue",
-                        "current_value": 25000,
-                        "previous_value": 22000,
-                        "change": 3000,
-                        "change_percentage": 13.6,
-                        "trend": "up"
-                    },
-                    {
-                        "metric": "Occupancy",
-                        "current_value": 82,
-                        "previous_value": 78,
-                        "change": 4,
-                        "change_percentage": 5.1,
-                        "trend": "up"
-                    },
-                    {
-                        "metric": "ADR",
-                        "current_value": 305,
-                        "previous_value": 295,
-                        "change": 10,
-                        "change_percentage": 3.4,
-                        "trend": "up"
-                    }
-                ],
-                "revenue_trend": [
-                    {"date": "2024-02-01", "current": 800, "previous": 700},
-                    {"date": "2024-02-05", "current": 1200, "previous": 900}
-                ],
-                "occupancy_trend": [
-                    {"date": "2024-02-01", "current": 75, "previous": 70},
-                    {"date": "2024-02-05", "current": 85, "previous": 75}
-                ]
+                "current_period": current_metrics,
+                "previous_period": previous_metrics,
+                "comparison_type": "period",
+                "metrics_comparison": metrics_comparison,
+                "revenue_trend": sorted(list(rev_trend_map.values()), key=lambda x: x["date"]),
+                "occupancy_trend": sorted(list(occ_trend_map.values()), key=lambda x: x["date"])
             }
         except Exception as e:
             self.logger.error(f"Error generating performance report: {e}", exc_info=True)
@@ -420,45 +547,136 @@ class ReportService:
 
     async def get_service_provider_report(self, from_date: str, to_date: str, provider_id: Optional[str] = None) -> Dict[str, Any]:
         try:
-            # For now, return mock data in correct format to avoid crashes
-            # In a real scenario, we'd query jobs assigned to this provider
+            # Convert string dates to date objects for SQLAlchemy/asyncpg
+            try:
+                from_dt = datetime.strptime(from_date, "%Y-%m-%d").date()
+                to_dt = datetime.strptime(to_date, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                # Fallback to strings if format is wrong or already date objects
+                from_dt = from_date
+                to_dt = to_date
+
+            # If no provider_id is specified, try to find the first available provider to make the report "just work"
+            if not provider_id:
+                # Try cleaning crews first
+                crew_check = text(f"SELECT id FROM {app_config.cleaning_crews_collection} WHERE active = True LIMIT 1")
+                crew_check_res = await self.session.execute(crew_check)
+                first_crew = crew_check_res.fetchone()
+                if first_crew:
+                    provider_id = str(first_crew[0])
+                else:
+                    # Try service categories
+                    cat_check = text("SELECT id FROM service_category WHERE status = True LIMIT 1")
+                    cat_check_res = await self.session.execute(cat_check)
+                    first_cat = cat_check_res.fetchone()
+                    if first_cat:
+                        provider_id = str(first_cat[0])
+            
+            if not provider_id:
+                # If still no provider found in DB, we can't generate a report
+                raise HTTPException(status_code=404, detail="No active service providers found in database")
+
+            # 1. Try to find in cleaning_crews first
+            crew_query = text(f"SELECT * FROM {app_config.cleaning_crews_collection} WHERE id::text = :id")
+            crew_res = await self.session.execute(crew_query, {"id": provider_id})
+            provider = crew_res.fetchone()
+            
+            provider_data = None
+            jobs = []
+            
+            if provider:
+                provider = dict(provider._mapping)
+                provider_data = {
+                    "provider_id": str(provider["id"]),
+                    "provider_name": provider["name"],
+                    "provider_email": provider["email"],
+                    "provider_phone": provider["phone"],
+                    "service_type": provider["role"] or "Cleaning"
+                }
+                
+                # Fetch cleaning tasks for this provider
+                tasks_query = text(f"""
+                    SELECT ct.id as job_id, ct.scheduled_date as date, p.name as property_name, 
+                           b.guest_name, 'Cleaning' as service_details, 
+                           150.0 as amount, 0.0 as tip, ct.status
+                    FROM {app_config.cleaning_tasks_collection} ct
+                    LEFT JOIN {app_config.properties_collection} p ON (ct.property_id::text = p.id::text OR ct.property_id = p.name)
+                    LEFT JOIN {app_config.bookings_collection} b ON ct.reservation_id = b.reservation_id
+                    WHERE ct.crew_id::text = :id AND ct.scheduled_date >= :from AND ct.scheduled_date <= :to
+                    ORDER BY ct.scheduled_date DESC
+                """)
+                tasks_res = await self.session.execute(tasks_query, {
+                    "id": provider_id,
+                    "from": from_dt,
+                    "to": to_dt
+                })
+                jobs = [dict(row._mapping) for row in tasks_res.fetchall()]
+            else:
+                # 2. Try to find in service_category
+                cat_query = text(f"SELECT * FROM service_category WHERE id::text = :id")
+                cat_res = await self.session.execute(cat_query, {"id": provider_id})
+                category = cat_res.fetchone()
+                
+                if category:
+                    category = dict(category._mapping)
+                    provider_data = {
+                        "provider_id": str(category["id"]),
+                        "provider_name": category["category_name"],
+                        "provider_email": category["email"],
+                        "provider_phone": category["phone"],
+                        "service_type": category["category_name"]
+                    }
+                    
+                    # Fetch service bookings for this category
+                    services_query = text(f"""
+                        SELECT bs.id as job_id, bs.service_date as date, p.name as property_name,
+                               b.guest_name, sc.category_name as service_details,
+                               sc.price as amount, 0.0 as tip, bs.status
+                        FROM booking_service bs
+                        LEFT JOIN service_category sc ON bs.service_id = sc.id
+                        LEFT JOIN {app_config.bookings_collection} b ON bs.booking_id = b.reservation_id
+                        LEFT JOIN {app_config.properties_collection} p ON (b.property_id::text = p.id::text OR b.property_name = p.name)
+                        WHERE bs.service_id::text = :id AND bs.service_date >= :from AND bs.service_date <= :to
+                        ORDER BY bs.service_date DESC
+                    """)
+                    services_res = await self.session.execute(services_query, {
+                        "id": provider_id,
+                        "from": from_dt,
+                        "to": to_dt
+                    })
+                    jobs = [dict(row._mapping) for row in services_res.fetchall()]
+
+            if not provider_data:
+                raise HTTPException(status_code=404, detail="Provider not found")
+
+            # Format jobs and calculate totals
+            total_rev = 0
+            for job in jobs:
+                total_rev += float(job.get("amount") or 0)
+                # Serialize dates
+                if job.get("date") and hasattr(job["date"], "isoformat"):
+                    job["date"] = job["date"].isoformat()
+                elif job.get("date") and hasattr(job["date"], "strftime"):
+                    job["date"] = job["date"].strftime("%Y-%m-%d")
+            
+            # Use a default commission rate (e.g., 10%) if not defined
+            commission_rate = 10.0
+            commission_amount = total_rev * (commission_rate / 100.0)
+            
             return {
-                "provider_id": provider_id or "prov-1",
-                "provider_name": "John Doe Services",
-                "provider_email": "john@example.com",
-                "provider_phone": "+1 (555) 012-3456",
-                "service_type": "Cleaning & Maintenance",
+                **provider_data,
                 "period_start": from_date,
                 "period_end": to_date,
-                "jobs": [
-                    {
-                        "job_id": "job-101",
-                        "date": from_date,
-                        "property_name": "Ocean View Villa",
-                        "guest_name": "Alice Johnson",
-                        "service_details": "Post-checkout full cleaning",
-                        "amount": 150.0,
-                        "tip": 20.0,
-                        "status": "completed"
-                    },
-                    {
-                        "job_id": "job-102",
-                        "date": to_date,
-                        "property_name": "Mountain Retreat",
-                        "guest_name": "Bob Smith",
-                        "service_details": "Emergency plumbing repair",
-                        "amount": 250.0,
-                        "tip": 0.0,
-                        "status": "pending"
-                    }
-                ],
-                "total_revenue": 400.0,
-                "total_jobs": 2,
-                "commission_rate": 10.0,
-                "commission_amount": 40.0,
-                "net_payout": 360.0,
-                "average_job_value": 200.0
+                "jobs": jobs,
+                "total_revenue": round(total_rev, 2),
+                "total_jobs": len(jobs),
+                "commission_rate": commission_rate,
+                "commission_amount": round(commission_amount, 2),
+                "net_payout": round(total_rev - commission_amount, 2),
+                "average_job_value": round(total_rev / len(jobs), 2) if jobs else 0
             }
+        except HTTPException:
+            raise
         except Exception as e:
             self.logger.error(f"Error generating service provider report: {e}", exc_info=True)
             raise
