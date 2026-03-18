@@ -5,6 +5,9 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from src.utils.report_pdf import generate_pdf_report
+from src.utils.report_email import build_email_html, send_email_with_pdf
+
 
 from config.settings import app_config
 
@@ -795,6 +798,18 @@ class ReportService:
             self.logger.error(f"Error toggling scheduled report: {e}", exc_info=True)
             raise
 
+    def _calculate_next_run(self, freq: str):
+        now = datetime.utcnow().date()
+        if freq == "weekly":
+            return now + timedelta(days=7)
+        elif freq == "monthly":
+            return now + timedelta(days=30)
+        elif freq == "quarterly":
+            return now + timedelta(days=90)
+        return now + timedelta(days=7)
+
+   
+
     async def run_scheduled_reports(self):
         try:
             query = text("""
@@ -809,25 +824,47 @@ class ReportService:
                 report = dict(row._mapping)
 
                 report_type = report.get("report_type")
-                filters = json.loads(report.get("filters", "{}"))
+                filters = report.get("filters", {})
+                if isinstance(filters, str):
+                    filters = json.loads(filters)
 
+                recipients = report.get("recipients", [])
+                if isinstance(recipients, str):
+                    recipients = json.loads(recipients)
                 from_date = filters.get("from")
                 to_date = filters.get("to")
 
                 data = None
 
-                # ✅ Report type ke hisaab se function call
+                # ✅ Generate report
                 if report_type == "booking":
                     data = await self.get_booking_summary(from_date, to_date)
+                    title = "Booking Report"
+
                 elif report_type == "occupancy":
                     data = await self.get_occupancy_report(from_date, to_date)
+                    title = "Occupancy Report"
+
                 elif report_type == "owner":
                     data = await self.get_owner_statement(from_date, to_date)
+                    title = "Owner Statement"
 
-                # 👉 (Future: yahan email bhejna hai)
-                print(f"Running report: {report.get('name')}")
+                if not data:
+                    continue
 
-                # ✅ Next run calculate
+                # ✅ Generate PDF
+                pdf_bytes = generate_pdf_report(title, data)
+
+                # ✅ Send Email to all recipients
+                for email in recipients:
+                    send_email_with_pdf(
+                        to_email=email,
+                        subject=f"{title} ({from_date} to {to_date})",
+                        content=build_email_html(title, from_date, to_date),
+                        pdf_bytes=pdf_bytes
+                    )
+
+                # ✅ Update next_run
                 next_run = self._calculate_next_run(report.get("frequency"))
 
                 update_query = text("""
@@ -842,16 +879,9 @@ class ReportService:
                     "id": report.get("id")
                 })
 
+            await self.session.commit()
+
         except Exception as e:
             self.logger.error(f"Error running scheduled reports: {e}", exc_info=True)
             raise
-
-    def _calculate_next_run(self, freq: str):
-        now = datetime.utcnow().date()
-        if freq == "weekly":
-            return now + timedelta(days=7)
-        elif freq == "monthly":
-            return now + timedelta(days=30)
-        elif freq == "quarterly":
-            return now + timedelta(days=90)
-        return now + timedelta(days=7)
+        
