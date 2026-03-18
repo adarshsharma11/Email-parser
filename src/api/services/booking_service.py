@@ -607,28 +607,35 @@ class BookingService:
             self.logger.error(f"Failed to create cleaning task: {e}")
             return None
 
-    async def get_bookings_paginated(self, platform: Optional[str], page: int, limit: int) -> Dict[str, Any]:
+    async def get_bookings_paginated(self, platform: Optional[str], page: int, limit: int, search: Optional[str] = None) -> Dict[str, Any]:
         try:
             offset = (page - 1) * limit
             
-            # Count
-            count_query = "SELECT COUNT(*) FROM bookings"
-            params = {}
+            # Build WHERE clause
+            where_clauses = []
+            params = {"limit": limit, "offset": offset}
+            
             if platform:
-                count_query += " WHERE platform = :p"
+                where_clauses.append("platform = :p")
                 params["p"] = platform
             
-            res_count = await self.session.execute(text(count_query), params)
+            if search:
+                where_clauses.append("(guest_name ILIKE :s OR reservation_id::text ILIKE :s OR property_name ILIKE :s)")
+                params["s"] = f"%{search}%"
+            
+            where_sql = ""
+            if where_clauses:
+                where_sql = " WHERE " + " AND ".join(where_clauses)
+
+            # Count
+            count_query = text(f"SELECT COUNT(*) FROM bookings{where_sql}")
+            res_count = await self.session.execute(count_query, params)
             total = res_count.scalar() or 0
             
             # Data
-            data_query = "SELECT * FROM bookings"
-            if platform:
-                data_query += " WHERE platform = :p"
-            data_query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-            params.update({"limit": limit, "offset": offset})
+            data_query = text(f"SELECT * FROM bookings{where_sql} ORDER BY check_in_date DESC LIMIT :limit OFFSET :offset")
             
-            res_data = await self.session.execute(text(data_query), params)
+            res_data = await self.session.execute(data_query, params)
             rows = res_data.fetchall()
             
             # Fetch tasks for these bookings

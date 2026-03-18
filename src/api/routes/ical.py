@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ..services.property_service import PropertyService
 from ..dependencies import get_property_service
 import logging
@@ -19,9 +19,13 @@ class PropertyCreate(BaseModel):
     airbnb_id: str | None = None
     booking_id: str | None = None
     status: str | None = None
-    base_price: float = 0.0
+    base_price: float = Field(..., gt=50, description="Base price must be greater than 50")
     bedrooms: int = 0
     owner_id: int | None = None
+    # Fields for creating a new owner
+    new_owner_first_name: str | None = None
+    new_owner_last_name: str | None = None
+    new_owner_email: str | None = None
 
 @router.post("/property")
 async def create_property(property_data: PropertyCreate, service: PropertyService = Depends(get_property_service)):
@@ -37,7 +41,12 @@ async def create_property(property_data: PropertyCreate, service: PropertyServic
         status=property_data.status or "active",
         base_price=property_data.base_price,
         bedrooms=property_data.bedrooms,
-        owner_id=property_data.owner_id
+        owner_id=property_data.owner_id,
+        new_owner_data={
+            "first_name": property_data.new_owner_first_name,
+            "last_name": property_data.new_owner_last_name,
+            "email": property_data.new_owner_email
+        } if property_data.new_owner_email else None
     )
 
     if not result["success"]:
