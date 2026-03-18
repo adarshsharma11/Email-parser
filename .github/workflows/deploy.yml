@@ -18,4 +18,6 @@ jobs:
           script: |
             cd /var/www/app/Email-parser/
             git pull origin main
+            source venv/bin/activate 
+            pip install -r requirements.txt
             systemctl reload nginx
