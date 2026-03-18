@@ -204,34 +204,64 @@ class BookingService:
                     crews = await self.crew_service.get_active_crews(role="Cleaning")
                     
                     if crews:
-                        for crew in crews:
-                            scheduled_date = request.check_out_date
-                            scheduled_date = request.check_out_date
-                            task = await self.create_cleaning_task(
-                                booking_id=request.reservation_id,
-                                property_id=request.property_name or request.property_id or "Unknown",
-                                scheduled_date=scheduled_date,
-                                crew_id=crew.get("id"),
-                                category_id=crew.get("category_id")
+                        # Per user request, pick first one only not all
+                        crew = crews[0]
+                        scheduled_date = request.check_out_date
+                        
+                        # Ensure booking_data is available even if guest welcome step was skipped
+                        if 'booking_data' not in locals():
+                            booking_data = BookingData(
+                                reservation_id=request.reservation_id,
+                                platform=request.platform,
+                                guest_name=request.guest_name,
+                                guest_phone=request.guest_phone,
+                                guest_email=request.guest_email,
+                                check_in_date=request.check_in_date,
+                                check_out_date=request.check_out_date,
+                                property_name=request.property_name or "Vacation Rental",
+                                property_id=request.property_id
                             )
-                            
-                            if task:
-                                task_for_notify = {
-                                    "id": task.get("id", f"task_{request.reservation_id}"),
-                                    "booking_id": request.reservation_id,
-                                    "property_id": request.property_name or request.property_id or "Unknown",
-                                    "scheduled_date": scheduled_date
-                                }
+
+                        task = await self.create_cleaning_task(
+                            booking_id=request.reservation_id,
+                            property_id=request.property_name or request.property_id or "Unknown",
+                            scheduled_date=scheduled_date,
+                            crew_id=crew.get("id"),
+                            category_id=crew.get("category_id")
+                        )
+                        
+                        if task:
+                            task_for_notify = {
+                                "id": task.get("id", f"task_{request.reservation_id}"),
+                                "booking_id": request.reservation_id,
+                                "property_id": request.property_name or request.property_id or "Unknown",
+                                "scheduled_date": scheduled_date
+                            }
+
+                            if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
+                                notified_count += 1
                                 
-                                if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
-                                    notified_count += 1
-                                    try:
-                                        from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                                        calendar_client = GoogleCalendarClient()
-                                        calendar_client.add_cleaning_event(crew, task_for_notify)
-                                    except Exception as cal_err:
-                                        self.logger.error(f"Failed to add crew calendar event: {cal_err}")
-                            
+                                # Log to task_notifications so the follow-up cron knows this crew was notified
+                                try:
+                                    log_query = text("""
+                                        INSERT INTO task_notifications 
+                                        (task_id, crew_id, notification_type, status, created_at)
+                                        VALUES (:task_id, :crew_id, 'initial_notification', 'sent', CURRENT_TIMESTAMP)
+                                    """)
+                                    await self.session.execute(log_query, {
+                                        "task_id": task.get("id"),
+                                        "crew_id": crew.get("id")
+                                    })
+                                except Exception as log_err:
+                                    self.logger.error(f"Failed to log initial notification: {log_err}")
+
+                                try:
+                                    from ...calendar_integration.google_calendar_client import GoogleCalendarClient
+                                    calendar_client = GoogleCalendarClient()
+                                    calendar_client.add_cleaning_event(crew, task_for_notify)
+                                except Exception as cal_err:
+                                    self.logger.error(f"Failed to add crew calendar event: {cal_err}")
+                        
                         yield json.dumps({
                             "step": "crew_notification",
                             "status": "completed",
@@ -601,6 +631,34 @@ class BookingService:
             res_data = await self.session.execute(text(data_query), params)
             rows = res_data.fetchall()
             
+            # Fetch tasks for these bookings
+            reservation_ids = [row.reservation_id for row in rows]
+            tasks_by_reservation = {}
+            if reservation_ids:
+                tasks_query = text("""
+                    SELECT ct.*, cc.name as crew_name, cc.property_id as crew_property_id
+                    FROM cleaning_tasks ct
+                    LEFT JOIN cleaning_crews cc ON ct.crew_id = cc.id
+                    WHERE ct.reservation_id = ANY(:ids)
+                """)
+                tasks_res = await self.session.execute(tasks_query, {"ids": reservation_ids})
+                for t_row in tasks_res:
+                    t_dict = dict(t_row._mapping)
+                    rid = t_dict['reservation_id']
+                    if rid not in tasks_by_reservation:
+                        tasks_by_reservation[rid] = []
+                    
+                    # Format for frontend toVendorTask
+                    tasks_by_reservation[rid].append({
+                        "task_id": str(t_dict['id']),
+                        "scheduled_date": t_dict['scheduled_date'].isoformat() if t_dict['scheduled_date'] else None,
+                        "status": t_dict['status'],
+                        "crews": {
+                            "name": t_dict['crew_name'] or "Unknown Crew",
+                            "property_id": t_dict['crew_property_id'] or t_dict['property_id']
+                        }
+                    })
+
             bookings_list = []
             for row in rows:
                 b_dict = dict(row._mapping)
@@ -616,6 +674,9 @@ class BookingService:
                         b_dict['nights'] = max(0, delta.days)
                     else:
                         b_dict['nights'] = 0
+                
+                # Add tasks to booking
+                b_dict['tasks'] = tasks_by_reservation.get(b_dict['reservation_id'], [])
                 bookings_list.append(b_dict)
 
             return {
