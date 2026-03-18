@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from config.settings import app_config, api_config
+from ..config import settings
 
 
 class PropertyService:
@@ -26,7 +27,9 @@ class PropertyService:
     )-> Dict[str, Any]:
         """Save a new property and generate its iCal feed URL."""
         try:
-            base_url = api_config.base_url or "http://127.0.0.1:8000"
+            base_url = settings.api_base_url or "http://127.0.0.1:8001"
+            api_prefix = settings.api_prefix or ""
+            api_version = settings.api_version or "v1"
 
             property_data = {
                 "name": name,
@@ -51,7 +54,10 @@ class PropertyService:
 
             if row:
                 inserted_property = dict(row._mapping)
-                ical_url = f"{base_url}/property/{inserted_property['id']}.ics"
+                # Ensure the URL includes the version prefix so it's routed correctly
+                # We use the /ical suffix instead of .ics to avoid proxy issues with static file extensions
+                prefix_part = f"{api_prefix}/{api_version}" if api_prefix else f"/{api_version}"
+                ical_url = f"{base_url}{prefix_part}/property/{inserted_property['id']}/ical"
                 
                 update_query = text(f"UPDATE {app_config.properties_collection} SET ical_feed_url = :url WHERE id = :id RETURNING *")
                 result = await self.session.execute(update_query, {"url": ical_url, "id": inserted_property["id"]})
