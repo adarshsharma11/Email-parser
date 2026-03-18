@@ -106,7 +106,8 @@ class SendWelcomeEmailRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     
     reservation_id: str = Field(..., description="The booking reservation ID")
-    guest_email: str = Field(..., description="The guest email address to send to and update")
+    guest_email: Optional[str] = Field(None, description="The guest email address to send to and update")
+    guest_phone: Optional[str] = Field(None, description="The guest phone number to send to and update")
 
 
 class BookingServiceItem(BaseModel):

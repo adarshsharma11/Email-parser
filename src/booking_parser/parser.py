@@ -68,7 +68,8 @@ class BookingParser:
                     r'Guest\s+Name[:\s]*([A-Z][a-zA-Z\s\'\-]{1,40})',
                     r'Reservation\s+confirmed\s+for\s+([A-Z][a-zA-Z\s\'\-]{1,40})',
                     r'Reservation\s+for\s+([A-Z][a-zA-Z\s\'\-]{1,40})',
-                    r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+\[\s*https?://www\.airbnb\.com/hosting/reservations/details/',
+                    # Tightened link-based pattern: must not be a greeting
+                    r'(?<!Good\s)(?<!Good\s\bmorning\b)(?<!Hello\s)(?<!Hi\s)(?<!Dear\s)([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+\[\s*https?://www\.airbnb\.com/hosting/reservations/details/',
                     r'reach\s+out\s+to\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+to\s+send',
                     r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+ARRIVES\s+MONDAY',
                     r'^\s*([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\s+Booker',
@@ -121,7 +122,7 @@ class BookingParser:
         # Words to exclude from certain fields
         self.exclude_words = {
             'reservation_id': {'FOR', 'ID', 'RESERVATION', 'CONFIRMATION', 'BOOKING', 'NONE', 'NULL', 'UNDEFINED', 'REMINDER', 'CONFIRMED', 'THUMBNAIL', 'CONTAINER', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'TYPE', 'AMOUNT', 'LISTING', 'NUMBER'},
-            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO', 'PAID', 'AIRBNB', 'VRBO', 'BOOKING', 'PLUM', 'MESSAGE', 'REPLY', 'INQUIRY'},
+            'guest_name': {'CHECK', 'CHECKIN', 'CHECKOUT', 'GUEST', 'GUESTS', 'PHONE', 'EMAIL', 'ADULTS', 'CHILDREN', 'TOTAL', 'DATE', 'FROM', 'TO', 'PAID', 'AIRBNB', 'VRBO', 'BOOKING', 'PLUM', 'MESSAGE', 'REPLY', 'INQUIRY', 'GOOD', 'MORNING', 'HELLO', 'HI', 'DEAR', 'AFTERNOON', 'EVENING'},
             'property_name': {'THUMBNAIL', 'CONTAINER', 'DETAILS', 'ITINERARY', 'RESERVATION', 'BOOKING', 'CONFIRMATION', 'ACCEPTED', 'REQUESTED', 'SENT', 'USD', 'DAMAGE', 'PROTECTION', 'POLICY', 'DEPOSIT', 'STATEMENT', 'PAYMENT', 'INVOICE', 'THUMBNAILCONTAINER', 'PROTECTION POLICY', 'GUEST PAID', 'HOST PAYOUT', 'PAYOUT', 'RESPOND', 'INQUIRY', 'REQUEST', 'MESSAGE', 'REPLY', 'FREQUENTLY ASKED QUESTIONS', 'FAQ', 'SUPPORT', 'HELP', 'OPENTRACK', 'TRACKING', 'GMAIL', 'INBOX', 'AIRBNB', 'VRBO', 'BOOKING', 'PLUM'},
         }
 
@@ -132,7 +133,8 @@ class BookingParser:
             'JOSHUA TREE MANSION', 'ICONIC DESERT ESCAPE', 'AVANTSTAY',
             'REPLYING TO YOUR MESSAGE', 'NEW MESSAGE', 'ACCOUNT ACTIVITY',
             'YOUR INSTINCTS WERE RIGHT', 'WRITE A REVIEW', 'REMINDER TO WRITE',
-            'AIRBNB SUPPORT TEAM', 'GUEST SERVICES', 'CUSTOMER SUPPORT'
+            'AIRBNB SUPPORT TEAM', 'GUEST SERVICES', 'CUSTOMER SUPPORT',
+            'GOOD MORNING', 'GOOD AFTERNOON', 'GOOD EVENING', 'HELLO', 'HI', 'DEAR'
         }
 
     def parse_email(self, email_data: EmailData) -> ProcessingResult:
@@ -150,6 +152,16 @@ class BookingParser:
 
             # Extract data (subject + body + html)
             extracted_data = self._extract_data(email_data)
+
+            # Per user request: ONLY consider booking confirmation emails
+            if extracted_data.get("booking_type") != "booking":
+                self.logger.info(f"Skipping non-confirmation email (type: {extracted_data.get('booking_type')})")
+                return ProcessingResult(
+                    success=False,
+                    error_message=f"Not a booking confirmation email (detected type: {extracted_data.get('booking_type')})",
+                    email_id=email_data.email_id,
+                    platform=email_data.platform
+                )
 
             # Fallback: if reservation_id missing, use email_id to ensure booking capture
             if not extracted_data.get("reservation_id"):
@@ -245,19 +257,28 @@ class BookingParser:
             content_lower = content.lower()
             
             # 1. Check for explicit inquiry/request/reply words
-            if any(k in subj_lower for k in ["inquiry", "question", "message from", "inquired", "request for money", "requested money", "replied to your message", "new message"]):
+            inquiry_keywords = [
+                "inquiry", "question", "message from", "inquired", "request for money", 
+                "requested money", "replied to your message", "new message", "account activity",
+                "payment request", "payout sent", "review", "reminder to write", "write a review",
+                "your instincts were right", "verification", "security", "update your",
+                "hosting update", "payout update"
+            ]
+            
+            if any(k in subj_lower for k in inquiry_keywords):
                 extracted_data["booking_type"] = "inquiry"
-            elif "request" in subj_lower and not any(k in subj_lower for k in ["confirmed", "confirmation", "accepted"]):
+            elif "request" in subj_lower and not any(k in subj_lower for k in ["confirmed", "confirmation", "accepted", "itinerary"]):
                 extracted_data["booking_type"] = "inquiry"
             
             # 2. Check for explicit confirmation words
-            elif any(k in subj_lower for k in ["confirmed", "confirmation", "itinerary", "new booking", "booked", "reservation from", "booking from", "reservation for", "booking for"]):
+            elif any(k in subj_lower for k in ["confirmed", "confirmation", "itinerary", "new booking", "booked", "reservation from", "booking from", "reservation for", "booking for", "reservation confirmed"]):
                 extracted_data["booking_type"] = "booking"
-            elif any(k in content_lower for k in ["reservation confirmed", "booking confirmed", "your reservation is confirmed", "confirmed:"]):
+            elif any(k in content_lower for k in ["reservation confirmed", "booking confirmed", "your reservation is confirmed", "confirmed:", "reservation is confirmed", "booking is confirmed"]):
                 extracted_data["booking_type"] = "booking"
             
-            # 3. Fallback for reservation ID
-            elif "reservation_id" in extracted_data and extracted_data["reservation_id"] and not extracted_data["reservation_id"].startswith("INQ-"):
+            # 3. Fallback for reservation ID (if we found one that isn't from an inquiry)
+            elif "reservation_id" in extracted_data and extracted_data["reservation_id"] and not str(extracted_data["reservation_id"]).startswith("INQ-"):
+                # If we have a reservation ID and it's not explicitly an inquiry, it's likely a booking
                 extracted_data["booking_type"] = "booking"
             else:
                 extracted_data["booking_type"] = "other"
@@ -413,6 +434,8 @@ class BookingParser:
                         # Only remove trailing platform-specific text
                         name = re.sub(r'(?i)\s+(?:Entire\s+home/apt|hosted\s+by|Home\s+-\s+Entire).*$', '', name).strip()
                         name = re.sub(r'\s{2,}', ' ', name)
+                        # Remove trailing stay duration like "(4 nights)" or " - 4 nights"
+                        name = re.sub(r'\s*\(?\d+\s+nights?\)?\s*$', '', name, flags=re.IGNORECASE).strip()
                         # Remove trailing symbols like + or - if they ended up at the end
                         name = re.sub(r'[\+\-\s,]+$', '', name).strip()
                         
@@ -846,6 +869,11 @@ class BookingParser:
                                 tail = ','.join(parts[1:])
                                 if re.search(rf'\b{month}\b', tail, re.IGNORECASE) or re.search(r'\d{1,2}\s*(?:–|-|—)\s*\d{1,2}', tail):
                                     value = parts[0]
+                            
+                            # Remove trailing stay duration like "(4 nights)" or " - 4 nights"
+                            if value:
+                                value = re.sub(r'\s*\(?\d+\s+nights?\)?\s*$', '', value, flags=re.IGNORECASE).strip()
+                                
                             # Check for minimum meaningful length
                             if value and len(value) < 3:
                                 value = None
