@@ -23,6 +23,7 @@ regex==2024.5.15
 # Date/time
 python-dateutil==2.9.0
 pytz==2024.1
+icalendar==6.1.1
 
 # Logging
 structlog==24.1.0

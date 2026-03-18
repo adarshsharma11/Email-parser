@@ -272,6 +272,7 @@ class ActivityRuleBase(BaseModel):
     priority: Optional[str] = Field(None, description="Priority level")
     description: Optional[str] = Field(None, description="Description of the rule")
     status: Optional[bool] = Field(None, description="Status of the rule (enabled/disabled)")
+    user_id: Optional[int] = Field(None, description="User ID associated with the rule")
 
 class CreateActivityRuleRequest(ActivityRuleBase):
     """Request model for creating an activity rule."""
@@ -313,6 +314,7 @@ class ActivityRuleLog(BaseModel):
     id: int = Field(..., description="Unique identifier of the log")
     rule_name: str = Field(..., description="Name of the rule")
     outcome: str = Field(..., description="Outcome of the rule execution (success/failed)")
+    user_id: Optional[int] = Field(None, description="User ID associated with the log")
     created_at: datetime = Field(..., description="Timestamp of the log")
     updated_at: Optional[datetime] = Field(None, description="Update timestamp of the log")
 

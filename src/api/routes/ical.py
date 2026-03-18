@@ -85,5 +85,10 @@ async def generate_ical_feed(property_id: int, service: PropertyService = Depend
     )
 
 # Expose ICS under versioned router and public router
+# Original .ics routes
 router.add_api_route("/property/{property_id}.ics", generate_ical_feed, methods=["GET"])
 public_router.add_api_route("/property/{property_id}.ics", generate_ical_feed, methods=["GET"])
+
+# New routes without .ics extension to avoid proxy interception of static file extensions
+router.add_api_route("/property/{property_id}/ical", generate_ical_feed, methods=["GET"])
+public_router.add_api_route("/property/{property_id}/ical", generate_ical_feed, methods=["GET"])
