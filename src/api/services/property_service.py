@@ -35,7 +35,7 @@ class PropertyService:
                 try:
                     new_user = await self.auth_service.save_user(
                         email=new_owner_data["email"],
-                        password="123456",  # User requested default password
+                        password=new_owner_data.get("password") or "123456",  # User requested default password or provided one
                         first_name=new_owner_data.get("first_name"),
                         last_name=new_owner_data.get("last_name"),
                         role="owner"
