@@ -808,7 +808,6 @@ class ReportService:
             return now + timedelta(days=90)
         return now + timedelta(days=7)
 
-   
 
     async def run_scheduled_reports(self):
         try:
@@ -836,10 +835,10 @@ class ReportService:
 
                 data = None
 
-                # ✅ Generate report
+               # ✅ Generate report based on type
                 if report_type == "booking":
                     data = await self.get_booking_summary(from_date, to_date)
-                    title = "Booking Report"
+                    title = "Booking Summary Report"
 
                 elif report_type == "occupancy":
                     data = await self.get_occupancy_report(from_date, to_date)
@@ -847,9 +846,23 @@ class ReportService:
 
                 elif report_type == "owner":
                     data = await self.get_owner_statement(from_date, to_date)
-                    title = "Owner Statement"
+                    title = "Owner Statement Report"
 
-                if not data:
+                elif report_type == "service_revenue":
+                    data = await self.get_service_revenue(from_date, to_date)
+                    title = "Service Revenue Report"
+
+                elif report_type == "service_provider":
+                    provider_id = filters.get("provider_id")
+                    data = await self.get_service_provider_report(from_date, to_date, provider_id)
+                    title = "Service Provider Report"
+
+                elif report_type == "performance":
+                    data = await self.get_performance_report(from_date, to_date)
+                    title = "Performance Comparison Report"
+
+                else:
+                    self.logger.warning(f"Unknown report type: {report_type}")
                     continue
 
                 # ✅ Generate PDF

@@ -34,7 +34,7 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
         print(f"✅ Email sent to {to_email} | Status: {response.status_code}")
 
     except Exception as e:
-        print(f"❌ SendGrid Error for {to_email}: {str(e)}")
+        print(f" SendGrid Error for {to_email}: {str(e)}")
 
 def build_email_html(title: str, from_date: str, to_date: str):
     return f"""
