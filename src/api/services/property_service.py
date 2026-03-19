@@ -35,10 +35,10 @@ class PropertyService:
                 try:
                     new_user = await self.auth_service.save_user(
                         email=new_owner_data["email"],
-                        password=new_owner_data.get("password") or "123456",  # User requested default password or provided one
+                        password=new_owner_data.get("password") or "effi@12345",  # User requested default password or provided one
                         first_name=new_owner_data.get("first_name"),
                         last_name=new_owner_data.get("last_name"),
-                        role="owner"
+                        role="property_owner"
                     )
                     owner_id = new_user["id"]
                 except ValueError as e:

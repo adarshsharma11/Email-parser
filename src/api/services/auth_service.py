@@ -75,7 +75,7 @@ class AuthService:
         return None
 
     async def list_owners(self) -> List[Dict[str, Any]]:
-        query = text("SELECT id, email, first_name, last_name FROM users WHERE role = 'owner'")
+        query = text("SELECT id, email, first_name, last_name FROM users WHERE role = 'property_owner'")
         result = await self.session.execute(query)
         rows = result.fetchall()
         return [dict(row._mapping) for row in rows]
