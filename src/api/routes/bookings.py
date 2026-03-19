@@ -306,3 +306,29 @@ async def get_booking_reservation_map(
                 "details": {"error": str(e)}
             }
         )
+
+
+@router.delete(
+    "/{reservation_id}",
+    response_model=APIResponse,
+    summary="Delete a booking",
+    description="Delete a booking along with related services and tasks",
+    responses={
+        200: {"description": "Booking deleted successfully"},
+        404: {"description": "Booking not found"},
+        500: {"description": "Internal server error"},
+    },
+)
+async def delete_booking(
+    reservation_id: str,
+    booking_service: BookingService = Depends(get_booking_service),
+):
+    """
+    Delete booking by reservation_id
+    """
+    response = await booking_service.delete_booking(reservation_id)
+
+    if not response.get("success"):
+        raise HTTPException(status_code=404, detail=response.get("message"))
+
+    return response

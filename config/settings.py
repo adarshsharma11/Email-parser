@@ -53,13 +53,20 @@ class AppConfig:
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     default_timezone: str = os.getenv("DEFAULT_TIMEZONE", "UTC")
     max_emails_per_run: int = int(os.getenv("MAX_EMAILS_PER_RUN", "100"))
+
+
+
+    
+    SENDGRID_API_KEY: str = os.getenv("SENDGRID_API_KEY", "")
+    SENDGRID_FROM_EMAIL: str = os.getenv("SENDGRID_FROM_EMAIL", "")
+    SENDGRID_FROM_NAME: str = os.getenv("SENDGRID_FROM_NAME", "")
+
     
     # Data storage collection/table names
     bookings_collection: str = "bookings"
     properties_collection: str = "properties"
     cleaning_tasks_collection: str = "cleaning_tasks"
     cleaning_crews_collection: str = "cleaning_crews"
-    properties_collection= "properties"
     categories_collection: str = "category"
     users_collection: str = "user_credentials"
     auth_collection: str = "users"

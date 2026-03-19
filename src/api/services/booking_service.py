@@ -24,6 +24,12 @@ from .automation_service import AutomationService
 from .activity_rule_service import ActivityRuleService
 from .service_category_service import ServiceCategoryService
 from .user_service import UserService
+from fastapi import HTTPException
+from sqlalchemy import text
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 
 class BookingService:
@@ -791,3 +797,45 @@ class BookingService:
         except Exception as e:
             self.logger.error(f"Failed to update guest phone: {e}")
             return False
+
+
+    async def delete_booking(self, reservation_id: str):
+        try:
+            logger.info(f"Deleting booking {reservation_id}")
+
+            # Check if booking exists
+            query = """
+                SELECT reservation_id FROM bookings
+                WHERE reservation_id = :reservation_id
+            """
+            result = await self.session.execute(text(query), {"reservation_id": reservation_id})
+            booking = result.fetchone()
+
+            if not booking:
+                return {
+                    "success": False,
+                    "message": "Booking not found"
+                }
+
+            # Delete booking
+            delete_query = """
+                DELETE FROM bookings
+                WHERE reservation_id = :reservation_id
+            """
+            await self.session.execute(text(delete_query), {"reservation_id": reservation_id})
+            await self.session.commit()
+
+            return {
+                "success": True,
+                "message": f"Booking {reservation_id} deleted successfully"
+            }
+
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Delete booking failed: {str(e)}")
+
+            return {
+                "success": False,
+                "message": "Delete booking failed",
+                "error": str(e)
+            }
