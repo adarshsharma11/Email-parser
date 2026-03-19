@@ -81,7 +81,7 @@ async def get_bookings(
     platform: Optional[str] = Query(None, description="Filter by specific platform"),
     search: Optional[str] = Query(None, description="Search by guest name or reservation ID"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
-    limit: int = Query(10, ge=1, le=100, description="Number of bookings per page"),
+    limit: int = Query(10, ge=1, le=10000, description="Number of bookings per page"),
     booking_service: BookingService = Depends(get_booking_service)
 ):
     """
@@ -91,7 +91,7 @@ async def get_bookings(
         platform: Optional platform filter
         search: Optional search term
         page: Page number (starts at 1)
-        limit: Number of bookings per page (max 100)
+        limit: Number of bookings per page (max 10000)
         booking_service: Injected booking service
         
     Returns:
