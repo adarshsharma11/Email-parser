@@ -26,6 +26,7 @@ class PropertyCreate(BaseModel):
     new_owner_first_name: str | None = None
     new_owner_last_name: str | None = None
     new_owner_email: str | None = None
+    new_owner_password: str | None = None
 
 @router.post("/property")
 async def create_property(property_data: PropertyCreate, service: PropertyService = Depends(get_property_service)):
@@ -45,7 +46,8 @@ async def create_property(property_data: PropertyCreate, service: PropertyServic
         new_owner_data={
             "first_name": property_data.new_owner_first_name,
             "last_name": property_data.new_owner_last_name,
-            "email": property_data.new_owner_email
+            "email": property_data.new_owner_email,
+            "password": property_data.new_owner_password
         } if property_data.new_owner_email else None
     )
 
