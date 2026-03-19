@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
+import base64
 from datetime import datetime
 from ..dependencies import get_report_service
 from ..services.report_service import ReportService
 from ..models import ErrorResponse, APIResponse
+from src.utils.report_email import send_email_with_pdf, build_email_html
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -106,8 +108,41 @@ async def get_service_provider_report(
 
 @router.post("/send-email")
 async def send_report_email(payload: dict):
-    # Placeholder for email sending logic
-    return {"success": True, "message": "Report email sent (placeholder)"}
+    try:
+        recipients = payload.get("recipients", [])
+        subject = payload.get("subject", "Report Email")
+        message = payload.get("message", "")
+        pdf_base64 = payload.get("pdf_base64")
+        report_type = payload.get("report_type", "Owner Statement")
+        from_date = payload.get("from", "")
+        to_date = payload.get("to", "")
+
+        if not recipients:
+            raise HTTPException(status_code=400, detail="Recipients are required")
+
+        pdf_bytes = None
+        if pdf_base64:
+            # Strip data URI prefix if present
+            if "," in pdf_base64:
+                pdf_base64 = pdf_base64.split(",")[1]
+            pdf_bytes = base64.b64decode(pdf_base64)
+
+        # Generate HTML content if message is not provided
+        content = message
+        if not content:
+            content = build_email_html(report_type, from_date, to_date)
+
+        for email in recipients:
+            send_email_with_pdf(
+                to_email=email,
+                subject=subject,
+                content=content,
+                pdf_bytes=pdf_bytes
+            )
+
+        return {"success": True, "message": f"Report email sent to {len(recipients)} recipients"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/scheduled")
 async def get_scheduled_reports(service: ReportService = Depends(get_report_service)):
