@@ -21,3 +21,4 @@ jobs:
             source venv/bin/activate 
             pip install -r requirements.txt
             systemctl reload nginx
+            pm2 restart booking-api
