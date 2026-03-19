@@ -94,6 +94,9 @@ def create_app() -> FastAPI:
             method == "OPTIONS"
             or any(path.startswith(p) for p in open_paths)
             or (path.startswith("/property/") and path.endswith(".ics"))
+            or (path.startswith(f"{settings.api_prefix}/{settings.api_version}/property/") and path.endswith(".ics"))
+            or (path.startswith(f"{settings.api_prefix}/{settings.api_version}/property/") and path.endswith("/ical"))
+            or (path.startswith("/property/") and path.endswith("/ical"))
         ):
             return await call_next(request)
 

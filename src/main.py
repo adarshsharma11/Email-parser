@@ -207,10 +207,10 @@ class BookingAutomation:
                             self.logger.info(f"Successfully parsed booking: {bd.reservation_id} for guest {bd.guest_name} at property {bd.property_name}")
                             self.booking_logger.log_booking_parsed(bd.to_dict())
                             
-                            # Real bookings filter
+                            # Real bookings filter - ensure it's a booking, not an inquiry or other
                             booking_type = (bd.raw_data or {}).get("booking_type")
-                            if booking_type in ("inquiry", "other"):
-                                failed_emails.append({'email_id': email_data.email_id, 'error': "Skipped inquiry", 'platform': platform_name})
+                            if booking_type != "booking":
+                                self.logger.info(f"Skipping non-booking email {email_data.email_id} (type: {booking_type})")
                                 continue
                                 
                             # Basic validation - require reservation_id and at least one date
@@ -240,7 +240,11 @@ class BookingAutomation:
                                 'nights': bd.nights
                             })
                         else:
-                            failed_emails.append({'email_id': email_data.email_id, 'error': parse_result.error_message, 'platform': platform_name})
+                            # If it's explicitly not a booking confirmation, just skip it without logging as failure
+                            if "Not a booking confirmation" in str(parse_result.error_message):
+                                self.logger.info(f"Skipping non-confirmation email {email_data.email_id}")
+                            else:
+                                failed_emails.append({'email_id': email_data.email_id, 'error': parse_result.error_message, 'platform': platform_name})
                     except Exception as e:
                         failed_emails.append({'email_id': email_data.email_id, 'error': str(e), 'platform': "error"})
                 
@@ -327,41 +331,54 @@ class BookingAutomation:
                                     if res.success:
                                         self.booking_logger.log_new_booking(b.to_dict())
                                         
-                                        # Step 1: Guest Welcome Email (with rule check)
-                                        if await booking_service.automation_service.is_rule_enabled("guest_welcome_message"):
-                                            notifier.send_welcome(b)
-                                            await booking_service.automation_service.log_rule_execution("Guest Welcome Message", "success")
-                                        else:
-                                            self.logger.info("Skipping welcome email (rule disabled)")
+                                        # Per user request: Only send notifications/events if check-in is today or in the future
+                                        is_future_stay = True
+                                        if b.check_in_date:
+                                            # Normalize both to dates for comparison
+                                            check_in_date = b.check_in_date.date() if hasattr(b.check_in_date, 'date') else b.check_in_date
+                                            today_date = datetime.now().date()
+                                            if check_in_date < today_date:
+                                                is_future_stay = False
+                                                self.logger.info(f"Skipping notifications for past stay (check-in: {check_in_date})")
 
-                                        # Step 2: Cleaning Crew Notification (with rule check)
-                                        if await booking_service.automation_service.is_rule_enabled("create_cleaning_task"):
-                                            # Find a crew member for cleaning
-                                            crew = await booking_service.crew_service.get_single_crew_by_category(category_id=2) # 2 is usually cleaning
-                                            if crew:
-                                                scheduled_date = b.check_out_date
-                                                task = await booking_service.create_cleaning_task(
-                                                    booking_id=b.reservation_id,
-                                                    property_id=b.property_name or b.property_id or "Unknown",
-                                                    scheduled_date=scheduled_date,
-                                                    crew_id=crew.get("id")
-                                                )
-                                                
-                                                if task:
-                                                    task_for_notify = {
-                                                        "id": task.get("id", f"task_{b.reservation_id}"),
-                                                        "booking_id": b.reservation_id,
-                                                        "property_id": b.property_name or b.property_id or "Unknown",
-                                                        "scheduled_date": scheduled_date
-                                                    }
-                                                    
-                                                    if notifier.notify_cleaning_task(crew, task_for_notify, b):
-                                                        self.logger.info(f"Cleaning crew notified for booking {b.reservation_id}")
-                                                        await booking_service.automation_service.log_rule_execution("Create Cleaning Task", "success")
+                                        if is_future_stay:
+                                            # Step 1: Guest Welcome Email (with rule check)
+                                            if await booking_service.automation_service.is_rule_enabled("guest_welcome_message"):
+                                                notifier.send_welcome(b)
+                                                await booking_service.automation_service.log_rule_execution("Guest Welcome Message", "success")
                                             else:
-                                                self.logger.warning("No active cleaning crew found for notification")
+                                                self.logger.info("Skipping welcome email (rule disabled)")
+
+                                            # Step 2: Cleaning Crew Notification (with rule check)
+                                            if await booking_service.automation_service.is_rule_enabled("create_cleaning_task"):
+                                                # Find a crew member for cleaning
+                                                crew = await booking_service.crew_service.get_single_crew_by_category(category_id=2) # 2 is usually cleaning
+                                                if crew:
+                                                    scheduled_date = b.check_out_date
+                                                    task = await booking_service.create_cleaning_task(
+                                                        booking_id=b.reservation_id,
+                                                        property_id=b.property_name or b.property_id or "Unknown",
+                                                        scheduled_date=scheduled_date,
+                                                        crew_id=crew.get("id")
+                                                    )
+                                                    
+                                                    if task:
+                                                        task_for_notify = {
+                                                            "id": task.get("id", f"task_{b.reservation_id}"),
+                                                            "booking_id": b.reservation_id,
+                                                            "property_id": b.property_name or b.property_id or "Unknown",
+                                                            "scheduled_date": scheduled_date
+                                                        }
+                                                        
+                                                        if notifier.notify_cleaning_task(crew, task_for_notify, b):
+                                                            self.logger.info(f"Cleaning crew notified for booking {b.reservation_id}")
+                                                            await booking_service.automation_service.log_rule_execution("Create Cleaning Task", "success")
+                                                else:
+                                                    self.logger.warning("No active cleaning crew found for notification")
+                                            else:
+                                                self.logger.info("Skipping cleaning notification (rule disabled)")
                                         else:
-                                            self.logger.info("Skipping cleaning notification (rule disabled)")
+                                            self.logger.info(f"Past stay detected for {b.reservation_id}, skipping welcome email and cleaning task.")
 
                                         await booking_service.automation_service.log_rule_execution("New Booking Processed", "success")
                                 else:

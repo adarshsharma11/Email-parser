@@ -4,6 +4,8 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from config.settings import app_config, api_config
+from ..config import settings
+from .auth_service import AuthService
 
 
 class PropertyService:
@@ -11,6 +13,7 @@ class PropertyService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.auth_service = AuthService(session)
 
     async def create_property(
         self,
@@ -23,10 +26,33 @@ class PropertyService:
         base_price: float = 0.0,
         bedrooms: int = 0,
         owner_id: int | None = None,
+        new_owner_data: Dict[str, Any] | None = None,
     )-> Dict[str, Any]:
         """Save a new property and generate its iCal feed URL."""
         try:
-            base_url = api_config.base_url or "http://127.0.0.1:8000"
+            # If new owner data is provided, create the user first
+            if new_owner_data:
+                try:
+                    new_user = await self.auth_service.save_user(
+                        email=new_owner_data["email"],
+                        password=new_owner_data.get("password") or "effi@12345",  # User requested default password or provided one
+                        first_name=new_owner_data.get("first_name"),
+                        last_name=new_owner_data.get("last_name"),
+                        role="property_owner"
+                    )
+                    owner_id = new_user["id"]
+                except ValueError as e:
+                    if str(e) == "EMAIL_ALREADY_REGISTERED":
+                        # If email already exists, try to get the existing user's ID
+                        existing_user = await self.auth_service.get_user(new_owner_data["email"])
+                        if existing_user:
+                            owner_id = existing_user["id"]
+                    else:
+                        raise e
+
+            base_url = settings.api_base_url or "http://127.0.0.1:8001"
+            api_prefix = settings.api_prefix or ""
+            api_version = settings.api_version or "v1"
 
             property_data = {
                 "name": name,
@@ -51,7 +77,10 @@ class PropertyService:
 
             if row:
                 inserted_property = dict(row._mapping)
-                ical_url = f"{base_url}/property/{inserted_property['id']}.ics"
+                # Ensure the URL includes the version prefix so it's routed correctly
+                # We use the /ical suffix instead of .ics to avoid proxy issues with static file extensions
+                prefix_part = f"{api_prefix}/{api_version}" if api_prefix else f"/{api_version}"
+                ical_url = f"{base_url}{prefix_part}/property/{inserted_property['id']}/ical"
                 
                 update_query = text(f"UPDATE {app_config.properties_collection} SET ical_feed_url = :url WHERE id = :id RETURNING *")
                 result = await self.session.execute(update_query, {"url": ical_url, "id": inserted_property["id"]})

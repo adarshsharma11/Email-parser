@@ -87,14 +87,12 @@ class CleaningTaskFollowupCron:
 
     async def _find_unaccepted_tasks(self, session: AsyncSession) -> List[Dict[str, Any]]:
         """
-        Return cleaning tasks that:
-          - have status 'pending'
-          - were created more than FOLLOWUP_TASK_AGE_HOURS ago
-          - have no 'accepted' or 'rejected' entry in task_responses
+        Return cleaning tasks that are eligible for follow-up, which means they:
+          - have not been accepted, AND
+          - are either rejected, OR are pending and older than the timeout.
 
         Uses FOR UPDATE SKIP LOCKED to ensure only one concurrent cron instance
-        processes each row. Rows being processed by another transaction are
-        silently skipped.
+        processes each row.
         """
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=FOLLOWUP_TASK_AGE_HOURS)
 
@@ -108,17 +106,26 @@ class CleaningTaskFollowupCron:
                 ct.crew_id,
                 ct.created_at
             FROM cleaning_tasks ct
-            WHERE ct.status = 'pending'
-              AND ct.created_at <= :cutoff_time
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM task_responses tr
-                  WHERE tr.task_id = ct.id::text
-                    AND tr.task_type = 'cleaning'
-                    AND tr.response IN ('accepted', 'rejected')
+            WHERE
+              -- Global condition: Task must not have been accepted.
+               NOT EXISTS (
+                   SELECT 1
+                   FROM task_responses tr
+                   WHERE (tr.task_id = ct.id::text OR tr.task_id = ct.reservation_id)
+                     AND tr.task_type = 'cleaning'
+                     AND tr.response = 'accepted'
+               )
+              AND (
+                -- Trigger 1: Task is pending and has passed the follow-up timeout.
+                (ct.status = 'pending' AND ct.created_at <= :cutoff_time)
+                OR
+                -- Trigger 2: Task has been explicitly rejected.
+                (ct.status = 'rejected')
               )
-            ORDER BY ct.created_at ASC
-            LIMIT 100
+            ORDER BY 
+              CASE WHEN ct.status = 'rejected' THEN 0 ELSE 1 END, -- Prioritize rejected tasks
+              ct.created_at DESC -- Then most recent ones
+            LIMIT 500
             FOR UPDATE SKIP LOCKED
         """)
 
@@ -160,6 +167,16 @@ class CleaningTaskFollowupCron:
         booking = await self._fetch_booking_data(session, task.get("reservation_id"))
         if booking:
             logger.info(f"[task_id={task_id}] Booking data fetched (reservation_id={task.get('reservation_id')})")
+            
+            # --- Guard 2: Past Stay Check (Per user request) ---
+            check_in_date = booking.get("check_in_date")
+            if check_in_date:
+                # Normalize both to dates for comparison
+                check_in_date_obj = check_in_date.date() if hasattr(check_in_date, 'date') else check_in_date
+                today_date = datetime.now(timezone.utc).date()
+                if check_in_date_obj < today_date:
+                    logger.info(f"[task_id={task_id}] Skipping notifications for past stay (check-in: {check_in_date_obj})")
+                    return
         else:
             logger.info(f"[task_id={task_id}] No booking data found; proceeding without guest details")
 
@@ -296,75 +313,54 @@ class CleaningTaskFollowupCron:
         self, session: AsyncSession, task: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """
-        Identify the next crew member to notify using this priority:
-          1. Active crews for the same property AND category, excluding:
-               - the crew currently assigned to the task
-               - any crew already notified (via task_notifications)
-          2. Fallback: get_single_crew_by_category() if no property match
-
-        Returns the first eligible crew dict, or None if no one is available.
+        Identify the next crew member to notify.
+        
+        Priority:
+          1. Active crews for the same property AND category.
+          2. Fallback: Any active crew in the same category.
+        
+        In both cases, we exclude:
+          - the crew currently assigned to the task
+          - any crew already notified (via task_notifications)
         """
         task_id = task["id"]
         current_crew_id = task.get("crew_id")
+        category_id = task.get("category_id")
+        property_id = task.get("property_id")
 
         crew_service = CrewService(session)
 
-        # --- Primary attempt: same property, active crews ---
-        active_crews: List[Dict[str, Any]] = await crew_service.get_active_crews(
-            property_id=task.get("property_id")
-        )
+        # 1. Try finding crews for the specific property
+        if property_id:
+            active_crews = await crew_service.get_active_crews(property_id=property_id)
+            for crew in active_crews:
+                if self._is_crew_eligible(crew, current_crew_id, category_id):
+                    if not await self._already_notified_crew(session, task_id, crew["id"]):
+                        return crew
 
-        for crew in active_crews:
-            crew_id = crew.get("id")
-
-            # Must match the task's category
-            if crew.get("category_id") != task.get("category_id"):
-                continue
-
-            # Skip current assignee
-            if crew_id == current_crew_id:
-                logger.info(
-                    f"[task_id={task_id}] Skipping crew_id={crew_id} "
-                    f"(currently assigned)"
-                )
-                continue
-
-            # Skip crews already notified for this task
-            if await self._already_notified_crew(session, task_id, crew_id):
-                logger.info(
-                    f"[task_id={task_id}] Skipping crew_id={crew_id} "
-                    f"(already notified for this task)"
-                )
-                continue
-
-            return crew
-
-        # --- Fallback: any active crew in the same category ---
-        logger.info(
-            f"[task_id={task_id}] No eligible crew for property "
-            f"{task.get('property_id')}. Trying category-wide fallback."
-        )
-        if task.get("category_id"):
-            fallback_crew = await crew_service.get_single_crew_by_category(
-                task["category_id"]
-            )
-            if fallback_crew:
-                crew_id = fallback_crew.get("id")
-                if crew_id == current_crew_id:
-                    logger.info(
-                        f"[task_id={task_id}] Fallback crew_id={crew_id} is current assignee. "
-                        f"No eligible crew found."
-                    )
-                    return None
-                if await self._already_notified_crew(session, task_id, crew_id):
-                    logger.info(
-                        f"[task_id={task_id}] Fallback crew_id={crew_id} already notified. "
-                        f"No eligible crew found."
-                    )
-                    return None
-                return fallback_crew
+        # 2. Fallback: Try all active crews in the same category
+        if category_id:
+            all_crews = await crew_service.get_active_crews()
+            for crew in all_crews:
+                if self._is_crew_eligible(crew, current_crew_id, category_id):
+                    if not await self._already_notified_crew(session, task_id, crew["id"]):
+                        return crew
 
         return None
+
+    def _is_crew_eligible(self, crew: Dict[str, Any], current_crew_id: Optional[int], category_id: Optional[int]) -> bool:
+        """Helper to check if a crew member is eligible for a task."""
+        crew_id = crew.get("id")
+        
+        # Must not be the current assignee
+        if crew_id == current_crew_id:
+            return False
+            
+        # Must match category if one is specified
+        if category_id and crew.get("category_id") != category_id:
+            return False
+            
+        return True
 
     # ------------------------------------------------------------------
     # Step 7 – Send the notification email
@@ -426,10 +422,17 @@ class CleaningTaskFollowupCron:
     async def _update_task_assignment(
         self, session: AsyncSession, task_id: int, crew_id: int
     ) -> None:
-        """Update cleaning_tasks.crew_id to reflect the newly notified crew."""
+        """
+        Update cleaning_tasks.crew_id to reflect the newly notified crew.
+        Also reset the status to 'pending' so the new crew member has a chance
+        to accept or reject it, and reset created_at so the 4-hour timeout
+        starts fresh for the new assignee.
+        """
         query = text("""
             UPDATE cleaning_tasks
-            SET crew_id = :crew_id
+            SET crew_id = :crew_id,
+                status = 'pending',
+                created_at = CURRENT_TIMESTAMP
             WHERE id = :task_id
         """)
         await session.execute(query, {"task_id": task_id, "crew_id": crew_id})

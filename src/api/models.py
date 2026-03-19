@@ -106,7 +106,8 @@ class SendWelcomeEmailRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     
     reservation_id: str = Field(..., description="The booking reservation ID")
-    guest_email: str = Field(..., description="The guest email address to send to and update")
+    guest_email: Optional[str] = Field(None, description="The guest email address to send to and update")
+    guest_phone: Optional[str] = Field(None, description="The guest phone number to send to and update")
 
 
 class BookingServiceItem(BaseModel):
@@ -272,6 +273,7 @@ class ActivityRuleBase(BaseModel):
     priority: Optional[str] = Field(None, description="Priority level")
     description: Optional[str] = Field(None, description="Description of the rule")
     status: Optional[bool] = Field(None, description="Status of the rule (enabled/disabled)")
+    user_id: Optional[int] = Field(None, description="User ID associated with the rule")
 
 class CreateActivityRuleRequest(ActivityRuleBase):
     """Request model for creating an activity rule."""
@@ -313,6 +315,7 @@ class ActivityRuleLog(BaseModel):
     id: int = Field(..., description="Unique identifier of the log")
     rule_name: str = Field(..., description="Name of the rule")
     outcome: str = Field(..., description="Outcome of the rule execution (success/failed)")
+    user_id: Optional[int] = Field(None, description="User ID associated with the log")
     created_at: datetime = Field(..., description="Timestamp of the log")
     updated_at: Optional[datetime] = Field(None, description="Update timestamp of the log")
 

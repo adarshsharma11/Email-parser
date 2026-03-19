@@ -36,6 +36,23 @@ async def respond_to_task(
         status = "accepted" if action == "accept" else "rejected"
         
         async with psql_client.async_session_factory() as session:
+            # 0. Check if a response already exists for this task
+            check_query = text("""
+                SELECT response FROM task_responses 
+                WHERE task_id = :task_id AND task_type = :task_type
+            """)
+            check_res = await session.execute(check_query, {"task_id": task_id, "task_type": type})
+            existing_response = check_res.fetchone()
+            
+            if existing_response:
+                # Task already responded to, don't update status or log again
+                return {
+                    "success": True,
+                    "message": f"This task has already been {existing_response[0]}",
+                    "task_id": task_id,
+                    "status": existing_response[0]
+                }
+
             # 1. Update the task status and verify it exists
             rows_updated = 0
             if type == "cleaning":
