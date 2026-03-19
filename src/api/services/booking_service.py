@@ -238,29 +238,45 @@ class BookingService:
                                 "scheduled_date": scheduled_date
                             }
 
-                            if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
-                                notified_count += 1
-                                
-                                # Log to task_notifications so the follow-up cron knows this crew was notified
-                                try:
-                                    log_query = text("""
-                                        INSERT INTO task_notifications 
-                                        (task_id, crew_id, notification_type, status, created_at)
-                                        VALUES (:task_id, :crew_id, 'initial_notification', 'sent', CURRENT_TIMESTAMP)
-                                    """)
-                                    await self.session.execute(log_query, {
-                                        "task_id": task.get("id"),
-                                        "crew_id": crew.get("id")
-                                    })
-                                except Exception as log_err:
-                                    self.logger.error(f"Failed to log initial notification: {log_err}")
+                            # Per user request: Only send notifications/events if check-in is today or in the future
+                            is_future_stay = True
+                            if request.check_in_date:
+                                # Normalize both to dates for comparison
+                                check_in_date = request.check_in_date.date() if hasattr(request.check_in_date, 'date') else request.check_in_date
+                                today_date = datetime.utcnow().date()
+                                if check_in_date < today_date:
+                                    is_future_stay = False
+                                    self.logger.info(f"Skipping notifications for past stay (check-in: {check_in_date})")
 
-                                try:
-                                    from ...calendar_integration.google_calendar_client import GoogleCalendarClient
-                                    calendar_client = GoogleCalendarClient()
-                                    calendar_client.add_cleaning_event(crew, task_for_notify)
-                                except Exception as cal_err:
-                                    self.logger.error(f"Failed to add crew calendar event: {cal_err}")
+                            if is_future_stay:
+                                if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
+                                    notified_count += 1
+                                    
+                                    # Log to task_notifications so the follow-up cron knows this crew was notified
+                                    try:
+                                        # Use a nested transaction (savepoint) to prevent aborting the whole transaction if this fails
+                                        async with self.session.begin_nested():
+                                            log_query = text("""
+                                                INSERT INTO task_notifications 
+                                                (task_id, crew_id, notification_type, status, created_at)
+                                                VALUES (:task_id, :crew_id, 'initial_notification', 'sent', CURRENT_TIMESTAMP)
+                                            """)
+                                            await self.session.execute(log_query, {
+                                                "task_id": task.get("id"),
+                                                "crew_id": crew.get("id")
+                                            })
+                                    except Exception as log_err:
+                                        self.logger.warning(f"Failed to log initial notification (possibly missing table): {log_err}")
+                                        # We don't want to fail the whole booking process just because logging failed
+
+                                    try:
+                                        from ...calendar_integration.google_calendar_client import GoogleCalendarClient
+                                        calendar_client = GoogleCalendarClient()
+                                        calendar_client.add_cleaning_event(crew, task_for_notify)
+                                    except Exception as cal_err:
+                                        self.logger.error(f"Failed to add crew calendar event: {cal_err}")
+                            else:
+                                self.logger.info(f"Past stay detected for {request.reservation_id}, skipping notifications and calendar event.")
                         
                         yield json.dumps({
                             "step": "crew_notification",
@@ -531,9 +547,9 @@ class BookingService:
             raise
 
     async def send_welcome_email(self, request: SendWelcomeEmailRequest) -> APIResponse:
-        """Send a manual welcome email and update the booking record."""
+        """Send a manual welcome email/whatsapp and update the booking record."""
         try:
-            self.logger.info("Sending manual welcome email", reservation_id=request.reservation_id, email=request.guest_email)
+            self.logger.info("Sending manual welcome message", reservation_id=request.reservation_id, email=request.guest_email, phone=request.guest_phone)
             
             # 1. Fetch the booking
             query = text("SELECT * FROM bookings WHERE reservation_id = :rid")
@@ -545,13 +561,25 @@ class BookingService:
             
             booking_dict = dict(row._mapping)
             
-            # 2. Update the email in database
-            update_query = text("""
-                UPDATE bookings 
-                SET guest_email = :email, updated_at = NOW() 
-                WHERE reservation_id = :rid
-            """)
-            await self.session.execute(update_query, {"email": request.guest_email, "rid": request.reservation_id})
+            # 2. Update the email and phone in database
+            updates = []
+            params = {"rid": request.reservation_id}
+            
+            if request.guest_email:
+                updates.append("guest_email = :email")
+                params["email"] = request.guest_email
+            
+            if request.guest_phone:
+                updates.append("guest_phone = :phone")
+                params["phone"] = request.guest_phone
+                
+            if updates:
+                update_query = text(f"""
+                    UPDATE bookings 
+                    SET {", ".join(updates)}, updated_at = NOW() 
+                    WHERE reservation_id = :rid
+                """)
+                await self.session.execute(update_query, params)
             
             # 3. Trigger notification
             # Convert dict to BookingData model for the notifier
@@ -559,8 +587,8 @@ class BookingService:
                 reservation_id=booking_dict['reservation_id'],
                 platform=Platform(booking_dict['platform']),
                 guest_name=booking_dict.get('guest_name') or 'Guest',
-                guest_email=request.guest_email, # Use the new email
-                guest_phone=booking_dict.get('guest_phone'),
+                guest_email=request.guest_email or booking_dict.get('guest_email'), 
+                guest_phone=request.guest_phone or booking_dict.get('guest_phone'),
                 check_in_date=booking_dict.get('check_in_date'),
                 check_out_date=booking_dict.get('check_out_date'),
                 property_name=booking_dict.get('property_name') or 'Your Property',
@@ -570,18 +598,30 @@ class BookingService:
             )
             
             notifier = await self._get_notifier()
-            success = notifier.send_welcome(booking_data)
             
-            if success:
+            # Send Email
+            email_success = False
+            if booking_data.guest_email:
+                email_success = notifier.send_welcome(booking_data)
+                
+            # Send WhatsApp/SMS
+            whatsapp_success = False
+            if booking_data.guest_phone:
+                whatsapp_success = notifier.send_welcome_whatsapp(booking_data)
+            
+            if email_success or whatsapp_success:
                 # Log execution in automation history
-                await self.automation_service.log_rule_execution("Manual Welcome Email", "success")
-                return APIResponse(success=True, message=f"Welcome email sent successfully to {request.guest_email}")
+                await self.automation_service.log_rule_execution("Manual Welcome Message", "success")
+                msg = []
+                if email_success: msg.append(f"email to {booking_data.guest_email}")
+                if whatsapp_success: msg.append(f"WhatsApp to {booking_data.guest_phone}")
+                return APIResponse(success=True, message=f"Welcome message sent successfully via: {', '.join(msg)}")
             else:
-                return APIResponse(success=False, message="Failed to send email via SendGrid")
+                return APIResponse(success=False, message="Failed to send welcome messages via Email or WhatsApp")
                 
         except Exception as e:
-            self.logger.error(f"Failed to send manual welcome email: {e}", exc_info=True)
-            return APIResponse(success=False, message=f"Error: {str(e)}")
+            self.logger.error(f"Failed to send manual welcome message: {e}", exc_info=True)
+            return APIResponse(success=False, message=str(e))
 
     async def create_cleaning_task(self, booking_id: str, property_id: str, scheduled_date: Any, crew_id: Optional[int] = None, category_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:
@@ -607,28 +647,35 @@ class BookingService:
             self.logger.error(f"Failed to create cleaning task: {e}")
             return None
 
-    async def get_bookings_paginated(self, platform: Optional[str], page: int, limit: int) -> Dict[str, Any]:
+    async def get_bookings_paginated(self, platform: Optional[str], page: int, limit: int, search: Optional[str] = None) -> Dict[str, Any]:
         try:
             offset = (page - 1) * limit
             
-            # Count
-            count_query = "SELECT COUNT(*) FROM bookings"
-            params = {}
+            # Build WHERE clause
+            where_clauses = []
+            params = {"limit": limit, "offset": offset}
+            
             if platform:
-                count_query += " WHERE platform = :p"
+                where_clauses.append("platform = :p")
                 params["p"] = platform
             
-            res_count = await self.session.execute(text(count_query), params)
+            if search:
+                where_clauses.append("(guest_name ILIKE :s OR reservation_id::text ILIKE :s OR property_name ILIKE :s)")
+                params["s"] = f"%{search}%"
+            
+            where_sql = ""
+            if where_clauses:
+                where_sql = " WHERE " + " AND ".join(where_clauses)
+
+            # Count
+            count_query = text(f"SELECT COUNT(*) FROM bookings{where_sql}")
+            res_count = await self.session.execute(count_query, params)
             total = res_count.scalar() or 0
             
             # Data
-            data_query = "SELECT * FROM bookings"
-            if platform:
-                data_query += " WHERE platform = :p"
-            data_query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-            params.update({"limit": limit, "offset": offset})
+            data_query = text(f"SELECT * FROM bookings{where_sql} ORDER BY check_in_date DESC LIMIT :limit OFFSET :offset")
             
-            res_data = await self.session.execute(text(data_query), params)
+            res_data = await self.session.execute(data_query, params)
             rows = res_data.fetchall()
             
             # Fetch tasks for these bookings

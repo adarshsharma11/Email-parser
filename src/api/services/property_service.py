@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from config.settings import app_config, api_config
 from ..config import settings
+from .auth_service import AuthService
 
 
 class PropertyService:
@@ -12,6 +13,7 @@ class PropertyService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.auth_service = AuthService(session)
 
     async def create_property(
         self,
@@ -24,9 +26,30 @@ class PropertyService:
         base_price: float = 0.0,
         bedrooms: int = 0,
         owner_id: int | None = None,
+        new_owner_data: Dict[str, Any] | None = None,
     )-> Dict[str, Any]:
         """Save a new property and generate its iCal feed URL."""
         try:
+            # If new owner data is provided, create the user first
+            if new_owner_data:
+                try:
+                    new_user = await self.auth_service.save_user(
+                        email=new_owner_data["email"],
+                        password="123456",  # User requested default password
+                        first_name=new_owner_data.get("first_name"),
+                        last_name=new_owner_data.get("last_name"),
+                        role="owner"
+                    )
+                    owner_id = new_user["id"]
+                except ValueError as e:
+                    if str(e) == "EMAIL_ALREADY_REGISTERED":
+                        # If email already exists, try to get the existing user's ID
+                        existing_user = await self.auth_service.get_user(new_owner_data["email"])
+                        if existing_user:
+                            owner_id = existing_user["id"]
+                    else:
+                        raise e
+
             base_url = settings.api_base_url or "http://127.0.0.1:8001"
             api_prefix = settings.api_prefix or ""
             api_version = settings.api_version or "v1"

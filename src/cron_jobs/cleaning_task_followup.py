@@ -167,6 +167,16 @@ class CleaningTaskFollowupCron:
         booking = await self._fetch_booking_data(session, task.get("reservation_id"))
         if booking:
             logger.info(f"[task_id={task_id}] Booking data fetched (reservation_id={task.get('reservation_id')})")
+            
+            # --- Guard 2: Past Stay Check (Per user request) ---
+            check_in_date = booking.get("check_in_date")
+            if check_in_date:
+                # Normalize both to dates for comparison
+                check_in_date_obj = check_in_date.date() if hasattr(check_in_date, 'date') else check_in_date
+                today_date = datetime.now(timezone.utc).date()
+                if check_in_date_obj < today_date:
+                    logger.info(f"[task_id={task_id}] Skipping notifications for past stay (check-in: {check_in_date_obj})")
+                    return
         else:
             logger.info(f"[task_id={task_id}] No booking data found; proceeding without guest details")
 
