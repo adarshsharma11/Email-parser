@@ -1,12 +1,21 @@
 import base64
+import ssl
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 from config.settings import app_config
 
+# ✅ Handle SSL certificate verification issue (common on macOS)
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 
 
-def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes):
+
+def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes = None):
     try:
         message = Mail(
             from_email=(app_config.SENDGRID_FROM_EMAIL, app_config.SENDGRID_FROM_NAME),
@@ -15,17 +24,18 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
             html_content=content
         )
 
-        # ✅ PDF attach
-        encoded_file = base64.b64encode(pdf_bytes).decode()
+        # ✅ PDF attach if provided
+        if pdf_bytes:
+            encoded_file = base64.b64encode(pdf_bytes).decode()
 
-        attachment = Attachment(
-            FileContent(encoded_file),
-            FileName("Booking_Report.pdf"),
-            FileType("application/pdf"),
-            Disposition("attachment")
-        )
+            attachment = Attachment(
+                FileContent(encoded_file),
+                FileName("Booking_Report.pdf"),
+                FileType("application/pdf"),
+                Disposition("attachment")
+            )
 
-        message.attachment = attachment
+            message.attachment = attachment
 
         # ✅ Send email
         sg = SendGridAPIClient(app_config.SENDGRID_API_KEY)
