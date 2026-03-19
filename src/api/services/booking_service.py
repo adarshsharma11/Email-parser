@@ -653,7 +653,13 @@ class BookingService:
             self.logger.error(f"Failed to create cleaning task: {e}")
             return None
 
-    async def get_bookings_paginated(self, platform: Optional[str], page: int, limit: int, search: Optional[str] = None) -> Dict[str, Any]:
+    async def get_bookings_paginated(
+        self, 
+        platform: Optional[str], 
+        page: int, 
+        limit: int, 
+        search: Optional[str] = None
+    ) -> Dict[str, Any]:
         try:
             offset = (page - 1) * limit
             
@@ -668,7 +674,7 @@ class BookingService:
             if search:
                 where_clauses.append("(guest_name ILIKE :s OR reservation_id::text ILIKE :s OR property_name ILIKE :s)")
                 params["s"] = f"%{search}%"
-            
+
             where_sql = ""
             if where_clauses:
                 where_sql = " WHERE " + " AND ".join(where_clauses)
@@ -684,6 +690,9 @@ class BookingService:
             res_data = await self.session.execute(data_query, params)
             rows = res_data.fetchall()
             
+            import math
+            total_pages = math.ceil(total / limit) if limit > 0 else 0
+
             # Fetch tasks for these bookings
             reservation_ids = [row.reservation_id for row in rows]
             tasks_by_reservation = {}
@@ -736,7 +745,8 @@ class BookingService:
                 "bookings": bookings_list,
                 "total": total,
                 "page": page,
-                "limit": limit
+                "limit": limit,
+                "total_pages": total_pages
             }
         except Exception as e:
             self.logger.error(f"Error fetching paginated bookings: {e}")
