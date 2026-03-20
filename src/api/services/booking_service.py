@@ -676,8 +676,8 @@ class BookingService:
                  # Map frontend status filter to database logic
                  # status filter is mix having value of status and payment filter
                  if status == 'confirmed':
-                     # Confirmed = (status is confirmed) OR (it is paid)
-                     where_clauses.append("(status = 'confirmed' OR total_amount > 0)")
+                     # Confirmed = it is paid and not cancelled
+                     where_clauses.append("(status != 'cancelled' AND total_amount > 0)")
                  elif status == 'paid':
                      # Explicitly paid bookings
                      where_clauses.append("total_amount > 0")
@@ -686,8 +686,8 @@ class BookingService:
                  elif status == 'cancelled':
                      where_clauses.append("status = 'cancelled'")
                  elif status == 'pending':
-                     # Pending = (status is NOT confirmed AND status is NOT cancelled AND NOT paid)
-                     where_clauses.append("(status NOT IN ('confirmed', 'cancelled', 'failed') AND (total_amount IS NULL OR total_amount = 0))")
+                     # Pending = not paid and not cancelled
+                     where_clauses.append("(status != 'cancelled' AND (total_amount IS NULL OR total_amount <= 0))")
                  else:
                      where_clauses.append("status = :status_val")
                      params["status_val"] = status
