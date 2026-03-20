@@ -246,10 +246,20 @@ class BookingParser:
         # ---- STATUS DETECTION
         try:
             cancel_pattern = r'\b(cancelled|canceled|cancellation|booking\s+canceled)\b'
+            confirmed_pattern = r'\b(confirmed|confirmation|accepted|itinerary)\b'
+            paid_pattern = r'\b(paid|payout|payment\s+received)\b'
+            
             if re.search(cancel_pattern, subject, re.IGNORECASE) or re.search(cancel_pattern, content, re.IGNORECASE):
                 extracted_data['status'] = 'cancelled'
+            elif re.search(confirmed_pattern, subject, re.IGNORECASE) or re.search(confirmed_pattern, content, re.IGNORECASE):
+                # If confirmed or paid, mark as confirmed
+                extracted_data['status'] = 'confirmed'
+            elif re.search(paid_pattern, subject, re.IGNORECASE) or re.search(paid_pattern, content, re.IGNORECASE):
+                extracted_data['status'] = 'confirmed'
+            else:
+                extracted_data['status'] = 'pending'
         except Exception:
-            pass
+            extracted_data['status'] = 'pending'
         
         # ---- BOOKING TYPE ----
         try:

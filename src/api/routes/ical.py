@@ -70,6 +70,31 @@ async def get_properties(
 
     return result
 
+class PropertyUpdate(BaseModel):
+    name: str | None = None
+    address: str | None = None
+    vrbo_id: str | None = None
+    airbnb_id: str | None = None
+    booking_id: str | None = None
+    status: str | None = None
+    base_price: float | None = Field(None, gt=50)
+    bedrooms: int | None = None
+    owner_id: int | None = None
+
+@router.patch("/property/{property_id}")
+async def update_property(
+    property_id: int, 
+    property_data: PropertyUpdate, 
+    service: PropertyService = Depends(get_property_service)
+):
+    """Update an existing property."""
+    result = await service.update_property(property_id, property_data.model_dump())
+
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return result
+
 @router.delete("/property/{property_id}")
 async def delete_property(property_id: int, service: PropertyService = Depends(get_property_service)):
     """Delete a property by ID (service-based)."""
