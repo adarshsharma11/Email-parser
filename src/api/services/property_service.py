@@ -93,21 +93,68 @@ class PropertyService:
             return {"success": False, "error": str(e)}
 
     async def get_property(self, property_id: int) -> Optional[Dict[str, Any]]:
-        query = text(f"SELECT * FROM {app_config.properties_collection} WHERE id = :id")
+        query = text(f"""
+            SELECT p.*, 
+                   u.first_name as owner_first_name, 
+                   u.last_name as owner_last_name, 
+                   u.email as owner_email
+            FROM {app_config.properties_collection} p
+            LEFT JOIN users u ON p.owner_id = u.id
+            WHERE p.id = :id
+        """)
         result = await self.session.execute(query, {"id": property_id})
         row = result.fetchone()
-        return dict(row._mapping) if row else None
+        if not row:
+            return None
+            
+        p_dict = dict(row._mapping)
+        # Nest owner details
+        p_dict["owner"] = {
+            "first_name": p_dict.pop("owner_first_name"),
+            "last_name": p_dict.pop("owner_last_name"),
+            "email": p_dict.pop("owner_email")
+        } if p_dict.get("owner_email") else None
+        
+        return p_dict
 
     async def list_properties(self) -> List[Dict[str, Any]]:
-        query = text(f"SELECT * FROM {app_config.properties_collection}")
+        query = text(f"""
+            SELECT p.*, 
+                   u.first_name as owner_first_name, 
+                   u.last_name as owner_last_name, 
+                   u.email as owner_email
+            FROM {app_config.properties_collection} p
+            LEFT JOIN users u ON p.owner_id = u.id
+        """)
         result = await self.session.execute(query)
         rows = result.fetchall()
-        return [dict(row._mapping) for row in rows]
+        
+        properties = []
+        for row in rows:
+            p_dict = dict(row._mapping)
+            # Nest owner details
+            p_dict["owner"] = {
+                "first_name": p_dict.pop("owner_first_name"),
+                "last_name": p_dict.pop("owner_last_name"),
+                "email": p_dict.pop("owner_email")
+            } if p_dict.get("owner_email") else None
+            properties.append(p_dict)
+            
+        return properties
 
     async def get_properties(self, page: int, limit: int) -> Dict[str, Any]:
         try:
             offset = (page - 1) * limit
-            query = text(f"SELECT * FROM {app_config.properties_collection} LIMIT :limit OFFSET :offset")
+            # Join properties with users to get owner details
+            query = text(f"""
+                SELECT p.*, 
+                       u.first_name as owner_first_name, 
+                       u.last_name as owner_last_name, 
+                       u.email as owner_email
+                FROM {app_config.properties_collection} p
+                LEFT JOIN users u ON p.owner_id = u.id
+                LIMIT :limit OFFSET :offset
+            """)
             result = await self.session.execute(query, {"limit": limit, "offset": offset})
             rows = result.fetchall()
             
@@ -115,9 +162,20 @@ class PropertyService:
             count_result = await self.session.execute(count_query)
             total = count_result.scalar() or 0
             
+            properties = []
+            for row in rows:
+                p_dict = dict(row._mapping)
+                # Nest owner details
+                p_dict["owner"] = {
+                    "first_name": p_dict.pop("owner_first_name"),
+                    "last_name": p_dict.pop("owner_last_name"),
+                    "email": p_dict.pop("owner_email")
+                } if p_dict.get("owner_email") else None
+                properties.append(p_dict)
+
             return {
                 "success": True,
-                "data": [dict(row._mapping) for row in rows],
+                "data": properties,
                 "total": total,
                 "page": page,
                 "limit": limit
