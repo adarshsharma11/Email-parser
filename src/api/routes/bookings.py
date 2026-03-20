@@ -71,7 +71,7 @@ async def create_booking(
     "",
     response_model=PaginatedBookingResponse,
     summary="Get paginated bookings",
-    description="Retrieve paginated booking records with optional platform filtering",
+    description="Retrieve paginated booking records with optional platform and status filtering",
     responses={
         200: {"description": "Bookings retrieved successfully"},
         500: {"description": "Internal server error", "model": ErrorResponse}
@@ -79,6 +79,7 @@ async def create_booking(
 )
 async def get_bookings(
     platform: Optional[str] = Query(None, description="Filter by specific platform"),
+    status: Optional[str] = Query(None, description="Filter by booking or payment status"),
     search: Optional[str] = Query(None, description="Search by guest name or reservation ID"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     limit: int = Query(10, ge=1, le=10000, description="Number of bookings per page"),
@@ -89,6 +90,7 @@ async def get_bookings(
     
     Args:
         platform: Optional platform filter
+        status: Optional status filter (confirmed, paid, pending)
         search: Optional search term
         page: Page number (starts at 1)
         limit: Number of bookings per page (max 10000)
@@ -113,6 +115,7 @@ async def get_bookings(
 
         bookings = await booking_service.get_bookings_paginated(
             platform=platform_value,
+            status=status,
             search=search,
             page=page,
             limit=limit

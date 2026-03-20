@@ -658,7 +658,8 @@ class BookingService:
         platform: Optional[str], 
         page: int, 
         limit: int, 
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        status: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
             offset = (page - 1) * limit
@@ -671,6 +672,26 @@ class BookingService:
                 where_clauses.append("platform = :p")
                 params["p"] = platform
             
+            if status and status != 'all':
+                 # Map frontend status filter to database logic
+                 # status filter is mix having value of status and payment filter
+                 if status == 'confirmed':
+                     # Confirmed = (status is confirmed) OR (it is paid)
+                     where_clauses.append("(status = 'confirmed' OR total_amount > 0)")
+                 elif status == 'paid':
+                     # Explicitly paid bookings
+                     where_clauses.append("total_amount > 0")
+                 elif status == 'failed':
+                     where_clauses.append("status = 'failed'")
+                 elif status == 'cancelled':
+                     where_clauses.append("status = 'cancelled'")
+                 elif status == 'pending':
+                     # Pending = (status is NOT confirmed AND status is NOT cancelled AND NOT paid)
+                     where_clauses.append("(status NOT IN ('confirmed', 'cancelled', 'failed') AND (total_amount IS NULL OR total_amount = 0))")
+                 else:
+                     where_clauses.append("status = :status_val")
+                     params["status_val"] = status
+
             if search:
                 where_clauses.append("(guest_name ILIKE :s OR reservation_id::text ILIKE :s OR property_name ILIKE :s)")
                 params["s"] = f"%{search}%"
@@ -737,6 +758,25 @@ class BookingService:
                     else:
                         b_dict['nights'] = 0
                 
+                # Calculate payment_status if not present
+                if 'payment_status' not in b_dict:
+                    if b_dict.get('total_amount') and b_dict.get('total_amount') > 0:
+                        b_dict['payment_status'] = 'Paid'
+                    elif b_dict.get('status') == 'failed':
+                        b_dict['payment_status'] = 'Failed'
+                    else:
+                        b_dict['payment_status'] = 'Pending'
+
+                # Fix status column: confirmed if paid, cancelled if cancelled, else pending
+                # User requested only: confirmed, cancelled, pending
+                if b_dict.get('status') == 'cancelled':
+                    # Keep cancelled as it is an explicit state
+                    b_dict['status'] = 'cancelled'
+                elif b_dict.get('payment_status') == 'Paid' or (b_dict.get('total_amount') and b_dict.get('total_amount') > 0):
+                    b_dict['status'] = 'confirmed'
+                else:
+                    b_dict['status'] = 'pending'
+
                 # Add tasks to booking
                 b_dict['tasks'] = tasks_by_reservation.get(b_dict['reservation_id'], [])
                 bookings_list.append(b_dict)
