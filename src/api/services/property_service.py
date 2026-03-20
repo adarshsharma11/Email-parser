@@ -230,3 +230,33 @@ class PropertyService:
 
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def update_property(self, property_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing property."""
+        try:
+            # Filter out None values and handle ID
+            update_data = {k: v for k, v in update_data.items() if v is not None}
+            if not update_data:
+                return {"success": False, "error": "No data to update"}
+
+            update_data["updated_at"] = datetime.now(timezone.utc)
+            
+            set_clauses = [f"{k} = :{k}" for k in update_data.keys()]
+            query = text(f"""
+                UPDATE {app_config.properties_collection} 
+                SET {', '.join(set_clauses)} 
+                WHERE id = :prop_id 
+                RETURNING *
+            """)
+            
+            params = {**update_data, "prop_id": int(property_id)}
+            result = await self.session.execute(query, params)
+            row = result.fetchone()
+
+            if row:
+                return {"success": True, "data": dict(row._mapping)}
+            else:
+                return {"success": False, "error": f"Property with ID {property_id} not found"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
