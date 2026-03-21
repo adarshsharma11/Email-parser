@@ -1,24 +1,22 @@
 # src/utils/report_email.py
 import base64
+import ssl
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 from config.settings import app_config
-import logging
 
-logger = logging.getLogger(__name__)
+# ✅ Handle SSL certificate verification issue (common on macOS)
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 
-def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes, filename: str = None):
-    """
-    Send email with PDF attachment using proper filename
-    
-    Args:
-        to_email: Recipient email address
-        subject: Email subject line
-        content: HTML email content
-        pdf_bytes: PDF file as bytes
-        filename: Optional custom filename (if not provided, uses default)
-    """
+
+
+def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes = None):
     try:
         # Use provided filename or default
         if not filename:
@@ -31,17 +29,18 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
             html_content=content
         )
 
-        # PDF attachment with proper filename
-        encoded_file = base64.b64encode(pdf_bytes).decode()
+        # ✅ PDF attach if provided
+        if pdf_bytes:
+            encoded_file = base64.b64encode(pdf_bytes).decode()
 
-        attachment = Attachment(
-            FileContent(encoded_file),
-            FileName(filename),  # Use dynamic filename
-            FileType("application/pdf"),
-            Disposition("attachment")
-        )
+            attachment = Attachment(
+                FileContent(encoded_file),
+                FileName("Booking_Report.pdf"),
+                FileType("application/pdf"),
+                Disposition("attachment")
+            )
 
-        message.attachment = attachment
+            message.attachment = attachment
 
         # Send email
         sg = SendGridAPIClient(app_config.SENDGRID_API_KEY)
