@@ -5,9 +5,11 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from src.utils.report_pdf import generate_pdf_report
 from src.utils.report_email import build_email_html, send_email_with_pdf
+    # Add this import at the top of report_service.py if not already present
+from src.utils.report_pdf import generate_pdf_report, get_report_filename
 
+# Update the run_scheduled_reports method
 
 from config.settings import app_config
 
@@ -809,6 +811,7 @@ class ReportService:
         return now + timedelta(days=7)
 
 
+
     async def run_scheduled_reports(self):
         try:
             query = text("""
@@ -822,7 +825,46 @@ class ReportService:
             for row in reports:
                 report = dict(row._mapping)
 
-                report_type = report.get("report_type")
+                # Normalize report_type
+                raw_type = (report.get("report_type") or "").strip().lower()
+
+                # Smart mapping (handles all user inputs)
+                REPORT_TYPE_MAP = {
+                    # Booking
+                    "booking": "booking",
+                    "booking summary": "booking",
+                    "booking report": "booking",
+
+                    # Occupancy
+                    "occupancy": "occupancy",
+                    "occupancy report": "occupancy",
+
+                    # Owner
+                    "owner": "owner",
+                    "owner statement": "owner",
+
+                    # Service Revenue
+                    "service revenue": "service_revenue",
+                    "revenue": "service_revenue",
+
+                    # Service Provider
+                    "service provider": "service_provider",
+                    "service provider statement": "service_provider",
+                    "provider": "service_provider",
+
+                    # Performance
+                    "performance": "performance",
+                    "performance comparison": "performance",
+                    "comparison": "performance",
+                }
+
+                report_type = REPORT_TYPE_MAP.get(raw_type)
+
+                if not report_type:
+                    self.logger.warning(f"Unknown report type: {raw_type}")
+                    continue
+
+                # Parse filters
                 filters = report.get("filters", {})
                 if isinstance(filters, str):
                     filters = json.loads(filters)
@@ -830,12 +872,19 @@ class ReportService:
                 recipients = report.get("recipients", [])
                 if isinstance(recipients, str):
                     recipients = json.loads(recipients)
+
                 from_date = filters.get("from")
                 to_date = filters.get("to")
+                
+                # Skip if dates are missing
+                if not from_date or not to_date:
+                    self.logger.warning(f"Missing dates for report: {report_type}")
+                    continue
 
                 data = None
+                title = ""
 
-               # ✅ Generate report based on type
+                # Generate report based on type
                 if report_type == "booking":
                     data = await self.get_booking_summary(from_date, to_date)
                     title = "Booking Summary Report"
@@ -861,23 +910,43 @@ class ReportService:
                     data = await self.get_performance_report(from_date, to_date)
                     title = "Performance Comparison Report"
 
-                else:
-                    self.logger.warning(f"Unknown report type: {report_type}")
+                if not data:
+                    self.logger.warning(f"No data generated for report: {report_type}")
                     continue
 
-                # ✅ Generate PDF
+                # Generate PDF with proper formatting
                 pdf_bytes = generate_pdf_report(title, data)
+                
+                # Generate proper filename based on report type and date range
+                filename = get_report_filename(title.replace(" Report", "").replace(" Statement", ""), from_date, to_date)
+                
+                self.logger.info(f"Generated PDF: {filename} for report type: {title}")
 
-                # ✅ Send Email to all recipients
+                # Send Email to all recipients
+                email_sent = False
                 for email in recipients:
-                    send_email_with_pdf(
-                        to_email=email,
-                        subject=f"{title} ({from_date} to {to_date})",
-                        content=build_email_html(title, from_date, to_date),
-                        pdf_bytes=pdf_bytes
-                    )
+                    try:
+                        # Import here to avoid circular imports
+                        from src.utils.report_email import send_email_with_pdf, build_email_html
+                        
+                        send_email_with_pdf(
+                            to_email=email,
+                            subject=f"{title} ({from_date} to {to_date})",
+                            content=build_email_html(title, from_date, to_date),
+                            pdf_bytes=pdf_bytes,
+                            filename=filename  # Pass the proper filename
+                        )
+                        self.logger.info(f"✅ Email sent to {email} with attachment: {filename}")
+                        email_sent = True
+                    except Exception as email_error:
+                        self.logger.error(f"❌ Email failed for {email}: {email_error}")
+                        continue
 
-                # ✅ Update next_run
+                if not email_sent:
+                    self.logger.warning(f"No emails were sent for report ID: {report.get('id')}")
+                    # Continue processing other reports
+
+                # Update next_run
                 next_run = self._calculate_next_run(report.get("frequency"))
 
                 update_query = text("""
@@ -893,8 +962,9 @@ class ReportService:
                 })
 
             await self.session.commit()
+            self.logger.info("Scheduled reports execution completed successfully")
 
         except Exception as e:
             self.logger.error(f"Error running scheduled reports: {e}", exc_info=True)
+            await self.session.rollback()
             raise
-        
