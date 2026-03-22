@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, Any, List, Optional
 import logging
 import json
@@ -743,13 +743,29 @@ class ReportService:
             # Calculate next run based on frequency
             freq = data.get("frequency", "weekly")
             now = datetime.utcnow().date()
+            
             if freq == "weekly":
-                next_run = now + timedelta(days=7)
+                # First run is next Monday
+                days_until_monday = (7 - now.weekday()) % 7
+                if days_until_monday == 0:
+                    # If today is Monday, schedule for today
+                    next_run = now
+                else:
+                    next_run = now + timedelta(days=days_until_monday)
             elif freq == "monthly":
-                # Rough approximation for monthly
-                next_run = now + timedelta(days=30)
+                # First run is 1st of next month
+                if now.month == 12:
+                    next_run = now.replace(year=now.year + 1, month=1, day=1)
+                else:
+                    next_run = now.replace(month=now.month + 1, day=1)
             elif freq == "quarterly":
-                next_run = now + timedelta(days=90)
+                # First run is 1st of month, 3 months away
+                month = now.month + 3
+                year = now.year
+                if month > 12:
+                    month -= 12
+                    year += 1
+                next_run = now.replace(year=year, month=month, day=1)
             else:
                 next_run = now + timedelta(days=7)
 
@@ -800,15 +816,35 @@ class ReportService:
             self.logger.error(f"Error toggling scheduled report: {e}", exc_info=True)
             raise
 
-    def _calculate_next_run(self, freq: str):
-        now = datetime.utcnow().date()
+    def _calculate_next_run(self, freq: str, base_date: Optional[date] = None):
+        """Calculate the next scheduled run date based on frequency."""
+        if base_date is None:
+            base_date = datetime.utcnow().date()
+        
         if freq == "weekly":
-            return now + timedelta(days=7)
+            # Schedule for exactly 7 days from now (this keeps it on the same day of the week)
+            # If we want to ensure it's ALWAYS Monday, we can force it:
+            days_until_monday = (7 - base_date.weekday()) % 7
+            if days_until_monday == 0:
+                days_until_monday = 7
+            return base_date + timedelta(days=days_until_monday)
+            
         elif freq == "monthly":
-            return now + timedelta(days=30)
+            # Schedule for the 1st of the next month
+            if base_date.month == 12:
+                return base_date.replace(year=base_date.year + 1, month=1, day=1)
+            return base_date.replace(month=base_date.month + 1, day=1)
+            
         elif freq == "quarterly":
-            return now + timedelta(days=90)
-        return now + timedelta(days=7)
+            # Schedule for the 1st of the month, 3 months from now
+            month = base_date.month + 3
+            year = base_date.year
+            if month > 12:
+                month -= 12
+                year += 1
+            return base_date.replace(year=year, month=month, day=1)
+            
+        return base_date + timedelta(days=7)
 
 
 
@@ -872,8 +908,42 @@ class ReportService:
                 if isinstance(recipients, str):
                     recipients = json.loads(recipients)
 
-                from_date = filters.get("from")
-                to_date = filters.get("to")
+                # Dynamic date calculation for scheduled reports
+                freq = report.get("frequency")
+                # Use the scheduled date as the reference point for the report period
+                # This ensures consistent data even if the cron runs a bit late
+                ref_date = report.get("next_run")
+                if isinstance(ref_date, str):
+                    ref_date = datetime.strptime(ref_date, "%Y-%m-%d").date()
+                elif isinstance(ref_date, datetime):
+                    ref_date = ref_date.date()
+                
+                if freq == "weekly":
+                    # Previous 7 days: ref_date-7 to ref_date-1
+                    last_start = ref_date - timedelta(days=7)
+                    last_end = ref_date - timedelta(days=1)
+                    from_date = last_start.strftime("%Y-%m-%d")
+                    to_date = last_end.strftime("%Y-%m-%d")
+                elif freq == "monthly":
+                    # Previous month: 1st to last day
+                    # ref_date is 1st of current month
+                    first_of_this_month = ref_date.replace(day=1)
+                    last_day_of_prev_month = first_of_this_month - timedelta(days=1)
+                    first_day_of_prev_month = last_day_of_prev_month.replace(day=1)
+                    from_date = first_day_of_prev_month.strftime("%Y-%m-%d")
+                    to_date = last_day_of_prev_month.strftime("%Y-%m-%d")
+                elif freq == "quarterly":
+                    # Previous 3 months
+                    first_of_this_month = ref_date.replace(day=1)
+                    last_day_of_prev_quarter = first_of_this_month - timedelta(days=1)
+                    # Go back approx 90 days and find the 1st
+                    temp_dt = last_day_of_prev_quarter - timedelta(days=80)
+                    first_day_of_prev_quarter = temp_dt.replace(day=1)
+                    from_date = first_day_of_prev_quarter.strftime("%Y-%m-%d")
+                    to_date = last_day_of_prev_quarter.strftime("%Y-%m-%d")
+                else:
+                    from_date = filters.get("from")
+                    to_date = filters.get("to")
                 
                 # Skip if dates are missing
                 if not from_date or not to_date:
@@ -945,8 +1015,13 @@ class ReportService:
                     self.logger.warning(f"No emails were sent for report ID: {report.get('id')}")
                     # Continue processing other reports
 
-                # Update next_run
-                next_run = self._calculate_next_run(report.get("frequency"))
+                # Update next_run based on the date it was supposed to run
+                # This keeps the schedule consistent (e.g., always on the 1st)
+                current_scheduled_date = report.get("next_run")
+                if isinstance(current_scheduled_date, str):
+                    current_scheduled_date = datetime.strptime(current_scheduled_date, "%Y-%m-%d").date()
+                
+                next_run = self._calculate_next_run(report.get("frequency"), base_date=current_scheduled_date)
 
                 update_query = text("""
                     UPDATE scheduled_reports
