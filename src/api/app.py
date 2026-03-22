@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
             f"{settings.api_prefix}/v1/auth/forgot-password",
             f"{settings.api_prefix}/v1/auth/reset-password",
             f"{settings.api_prefix}/v1/service-bookings/respond",
+            f"{settings.api_prefix}/v1/reports/internal/run-scheduled-reports",
         }
         if (
             method == "OPTIONS"

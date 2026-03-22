@@ -1,9 +1,12 @@
 # src/utils/report_email.py
 import base64
 import ssl
+import logging
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 from config.settings import app_config
+
+logger = logging.getLogger(__name__)
 
 # ✅ Handle SSL certificate verification issue (common on macOS)
 try:
@@ -16,7 +19,7 @@ else:
 
 
 
-def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes = None):
+def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: bytes = None, filename: str = None):
     try:
         # Use provided filename or default
         if not filename:
@@ -35,7 +38,7 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
 
             attachment = Attachment(
                 FileContent(encoded_file),
-                FileName("Booking_Report.pdf"),
+                FileName(filename),
                 FileType("application/pdf"),
                 Disposition("attachment")
             )
