@@ -52,7 +52,7 @@ class FastAPISettings(BaseSettings):
     supabase_anon_key: str = Field(default_factory=lambda: supabase_config.get_auth_key() if supabase_config.get_auth_key else "", description="Supabase anonymous key")
     supabase_service_role_key: Optional[str] = Field(default=None, description="Supabase service role key")
     
-    # Performance settings
+    # API Security & Performance
     cache_ttl_seconds: int = Field(default=300, description="Cache TTL in seconds")
     rate_limit_per_minute: int = Field(default=60, description="Rate limit per minute")
     

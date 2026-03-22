@@ -827,12 +827,11 @@ class ReportService:
 
                 # Normalize report_type
                 raw_type = (report.get("report_type") or "").strip().lower()
-
                 # Smart mapping (handles all user inputs)
                 REPORT_TYPE_MAP = {
                     # Booking
                     "booking": "booking",
-                    "booking summary": "booking",
+                    "booking-summary": "booking",
                     "booking report": "booking",
 
                     # Occupancy
@@ -841,14 +840,14 @@ class ReportService:
 
                     # Owner
                     "owner": "owner",
-                    "owner statement": "owner",
+                    "owner-statement": "owner",
 
                     # Service Revenue
-                    "service revenue": "service_revenue",
+                    "service-revenue": "service_revenue",
                     "revenue": "service_revenue",
 
                     # Service Provider
-                    "service provider": "service_provider",
+                    "service-provider": "service_provider",
                     "service provider statement": "service_provider",
                     "provider": "service_provider",
 
