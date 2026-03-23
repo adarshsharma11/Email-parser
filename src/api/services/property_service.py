@@ -117,6 +117,30 @@ class PropertyService:
         
         return p_dict
 
+    async def get_property_by_identifier(self, identifier: str) -> Optional[Dict[str, Any]]:
+        """Find a property by ID or name."""
+        try:
+            # Try by ID (if it's a number)
+            if str(identifier).isdigit():
+                prop = await self.get_property(int(identifier))
+                if prop:
+                    return prop
+            
+            # Try by name or IDs (vrbo_id, airbnb_id, etc.)
+            query = text(f"""
+                SELECT * FROM {app_config.properties_collection} 
+                WHERE name = :ident 
+                OR vrbo_id = :ident 
+                OR airbnb_id = :ident 
+                OR booking_id = :ident 
+                LIMIT 1
+            """)
+            result = await self.session.execute(query, {"ident": str(identifier)})
+            row = result.fetchone()
+            return dict(row._mapping) if row else None
+        except Exception:
+            return None
+
     async def list_properties(self) -> List[Dict[str, Any]]:
         query = text(f"""
             SELECT p.*, 

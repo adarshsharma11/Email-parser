@@ -204,6 +204,29 @@ class BookingAutomation:
                         
                         if parse_result.success and parse_result.booking_data:
                             bd = parse_result.booking_data
+                            
+                            # Normalize property ID/name early if possible
+                            ident = bd.property_id or bd.property_name
+                            bd.property_identifiers = [bd.property_id, bd.property_name] # For duplicate check later
+                            
+                            if ident:
+                                prop = await property_service.get_property_by_identifier(ident)
+                                if prop:
+                                    # Update both for consistency
+                                    bd.property_id = str(prop["id"])
+                                    bd.property_name = prop["name"]
+                                    # Add all known identifiers for robust duplicate check
+                                    bd.property_identifiers.extend([
+                                        str(prop.get('id')), 
+                                        prop.get('name'), 
+                                        prop.get('vrbo_id'), 
+                                        prop.get('airbnb_id'), 
+                                        prop.get('booking_id')
+                                    ])
+                            
+                            # Filter out None and duplicates from identifiers
+                            bd.property_identifiers = list(set(filter(None, bd.property_identifiers)))
+
                             self.logger.info(f"Successfully parsed booking: {bd.reservation_id} for guest {bd.guest_name} at property {bd.property_name}")
                             self.booking_logger.log_booking_parsed(bd.to_dict())
                             
@@ -289,15 +312,15 @@ class BookingAutomation:
                             # Check for existing booking (By ID OR by Property+Dates)
                             existing = await booking_service.get_booking_by_reservation_id(b.reservation_id)
                             
-                            # Use property_id or property_name as identifier for the stay
-                            pid_to_check = b.property_id or b.property_name
+                            # Use all known identifiers for robust duplicate check
+                            p_ids = getattr(b, 'property_identifiers', [b.property_id, b.property_name])
                             
-                            if not existing and pid_to_check and b.check_in_date and b.check_out_date:
+                            if not existing and p_ids and b.check_in_date and b.check_out_date:
                                 existing = await booking_service.get_booking_by_property_and_dates(
-                                    pid_to_check, b.check_in_date, b.check_out_date, b.guest_name
+                                    p_ids, b.check_in_date, b.check_out_date, b.guest_name
                                 )
                                 if existing:
-                                    self.logger.info(f"Duplicate booking found by dates for property {pid_to_check}, updating existing record.")
+                                    self.logger.info(f"Duplicate booking found by dates for property {p_ids}, updating existing record.")
                                     # Use the existing reservation_id to trigger an update instead of a new insert
                                     if hasattr(existing, 'get'):
                                         b.reservation_id = existing.get('reservation_id')
@@ -305,24 +328,16 @@ class BookingAutomation:
                                         b.reservation_id = getattr(existing, 'reservation_id', b.reservation_id)
 
                             from .api.models import CreateBookingRequest
-                            req = CreateBookingRequest(
-                                reservation_id=b.reservation_id,
-                                platform=b.platform.value if hasattr(b.platform, "value") else b.platform,
-                                guest_name=b.guest_name,
-                                guest_phone=b.guest_phone,
-                                guest_email=b.guest_email,
-                                check_in_date=b.check_in_date,
-                                check_out_date=b.check_out_date,
-                                property_id=b.property_id,
-                                property_name=b.property_name,
-                                nights=b.nights,
-                                number_of_guests=b.number_of_guests,
-                                total_amount=b.total_amount,
-                                currency=b.currency,
-                                booking_date=b.booking_date,
-                                email_id=b.email_id,
-                                raw_data=b.raw_data
-                            )
+                            
+                            # Prepare request data, excluding internal helper fields
+                            req_data = b.to_dict()
+                            # We must exclude fields not present in the CreateBookingRequest model
+                            # to avoid Pydantic validation errors
+                            internal_fields = ['property_identifiers', 'created_at', 'updated_at']
+                            for field in internal_fields:
+                                req_data.pop(field, None)
+                                
+                            req = CreateBookingRequest(**req_data)
 
                             if not existing:
                                 new_count += 1
@@ -381,12 +396,19 @@ class BookingAutomation:
                                             self.logger.info(f"Past stay detected for {b.reservation_id}, skipping welcome email and cleaning task.")
 
                                         await booking_service.automation_service.log_rule_execution("New Booking Processed", "success")
+                                    else:
+                                        self.logger.error(f"Failed to create booking {b.reservation_id}: {res.error}")
                                 else:
                                     # Still count for stats in dry run
                                     self.booking_logger.stats['new_bookings'] += 1
                             elif not dry_run:
                                 # Update existing if needed
-                                await booking_service.create_booking(req)
+                                res = await booking_service.create_booking(req)
+                                if res.success:
+                                    self.booking_logger.log_updated_booking(b.to_dict())
+                                    await booking_service.automation_service.log_rule_execution("Existing Booking Updated", "success")
+                                else:
+                                    self.logger.error(f"Failed to update booking {b.reservation_id}: {res.error}")
                                 
                         except Exception as e:
                             self.logger.error(f"Sync failed for {b.reservation_id}: {e}")

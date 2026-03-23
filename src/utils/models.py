@@ -49,6 +49,8 @@ class BookingData:
     currency: Optional[str] = None
     booking_date: Optional[datetime] = None
     email_id: Optional[str] = None
+    status: str = "pending"
+    property_identifiers: list[str] = field(default_factory=list)
     raw_data: Dict[str, Any] = field(default_factory=dict)
     
     @property
@@ -81,6 +83,7 @@ class BookingData:
             'currency': self.currency,
             'booking_date': self.booking_date.isoformat() if self.booking_date else None,
             'email_id': self.email_id,
+            'status': self.status,
             'created_at': datetime.utcnow().isoformat(),
             'updated_at': datetime.utcnow().isoformat(),
             'raw_data': self.raw_data

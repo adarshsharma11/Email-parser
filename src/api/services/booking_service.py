@@ -798,9 +798,18 @@ class BookingService:
         row = result.fetchone()
         return dict(row._mapping) if row else None
 
-    async def get_booking_by_property_and_dates(self, property_id: str, check_in: Any, check_out: Any, guest_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    async def get_booking_by_property_and_dates(self, property_identifiers: Any, check_in: Any, check_out: Any, guest_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Find a booking by property and dates to prevent duplicates."""
         try:
+            # Normalize identifiers to a list of strings
+            if isinstance(property_identifiers, (str, int)):
+                p_ids = [str(property_identifiers)]
+            else:
+                p_ids = [str(x) for x in property_identifiers if x]
+
+            if not p_ids:
+                return None
+
             # Handle potential string dates
             if isinstance(check_in, str):
                 from datetime import datetime
@@ -811,12 +820,12 @@ class BookingService:
 
             sql = """
                 SELECT * FROM bookings 
-                WHERE (property_id = :pid OR property_name = :pid)
+                WHERE (property_id = ANY(:p_ids) OR property_name = ANY(:p_ids))
                 AND DATE(check_in_date) = DATE(:ci) 
                 AND DATE(check_out_date) = DATE(:co)
             """
             params = {
-                "pid": property_id,
+                "p_ids": p_ids,
                 "ci": check_in,
                 "co": check_out
             }
