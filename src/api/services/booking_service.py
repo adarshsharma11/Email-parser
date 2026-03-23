@@ -674,10 +674,9 @@ class BookingService:
             
             if status and status != 'all':
                  # Map frontend status filter to database logic
-                 # status filter is mix having value of status and payment filter
                  if status == 'confirmed':
-                     # Confirmed = it is paid and not cancelled
-                     where_clauses.append("(status != 'cancelled' AND total_amount > 0)")
+                     # Confirmed = explicitly confirmed OR has payment
+                     where_clauses.append("(status = 'confirmed' OR (total_amount > 0 AND status != 'cancelled'))")
                  elif status == 'paid':
                      # Explicitly paid bookings
                      where_clauses.append("total_amount > 0")
@@ -686,8 +685,9 @@ class BookingService:
                  elif status == 'cancelled':
                      where_clauses.append("status = 'cancelled'")
                  elif status == 'pending':
-                     # Pending = not paid and not cancelled
-                     where_clauses.append("(status != 'cancelled' AND (total_amount IS NULL OR total_amount <= 0))")
+                     # Pending = explicitly pending OR (no status AND no payment)
+                     # BUT MUST NOT have payment (if it has payment, it is confirmed/paid)
+                     where_clauses.append("(status = 'pending' OR (status NOT IN ('confirmed', 'cancelled', 'failed') AND (total_amount IS NULL OR total_amount <= 0))) AND (total_amount IS NULL OR total_amount <= 0)")
                  else:
                      where_clauses.append("status = :status_val")
                      params["status_val"] = status
@@ -767,14 +767,20 @@ class BookingService:
                     else:
                         b_dict['payment_status'] = 'Pending'
 
-                # Fix status column: confirmed if paid, cancelled if cancelled, else pending
-                # User requested only: confirmed, cancelled, pending
-                if b_dict.get('status') == 'cancelled':
-                    # Keep cancelled as it is an explicit state
+                # Fix status column for consistent display
+                db_status = b_dict.get('status')
+                amount = b_dict.get('total_amount') or 0
+                
+                if db_status == 'cancelled':
                     b_dict['status'] = 'cancelled'
-                elif b_dict.get('payment_status') == 'Paid' or (b_dict.get('total_amount') and b_dict.get('total_amount') > 0):
-                    b_dict['status'] = 'confirmed'
+                elif amount > 0:
+                    # Anything with payment is at least "confirmed" (or "paid")
+                    b_dict['status'] = 'confirmed' if db_status != 'paid' else 'paid'
+                elif db_status in ['confirmed', 'paid', 'failed']:
+                    # Explicit statuses without payment (if possible)
+                    b_dict['status'] = db_status
                 else:
+                    # Default to pending if no payment and no explicit higher status
                     b_dict['status'] = 'pending'
 
                 # Add tasks to booking
