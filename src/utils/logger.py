@@ -124,6 +124,7 @@ class BookingLogger:
             'emails_processed': 0,
             'bookings_parsed': 0,
             'new_bookings': 0,
+            'updated_bookings': 0,
             'duplicate_bookings': 0,
             'errors': 0,
             'platforms': {}
@@ -160,6 +161,16 @@ class BookingLogger:
             platform=booking_data.get('platform')
         )
     
+    def log_updated_booking(self, booking_data: dict):
+        """Log when an existing booking is updated in Database."""
+        self.stats['updated_bookings'] += 1
+        self.logger.info(
+            "Existing booking updated in Database",
+            reservation_id=booking_data.get('reservation_id'),
+            platform=booking_data.get('platform'),
+            guest_name=booking_data.get('guest_name')
+        )
+    
     def log_duplicate_booking(self, reservation_id: str, platform: str):
         """Log when a duplicate booking is found."""
         self.stats['duplicate_bookings'] += 1
@@ -186,6 +197,7 @@ class BookingLogger:
             emails_processed=self.stats['emails_processed'],
             bookings_parsed=self.stats['bookings_parsed'],
             new_bookings=self.stats['new_bookings'],
+            updated_bookings=self.stats['updated_bookings'],
             duplicate_bookings=self.stats['duplicate_bookings'],
             errors=self.stats['errors'],
             platforms=self.stats['platforms']
@@ -198,6 +210,7 @@ class BookingLogger:
         print(f"{Fore.GREEN}* Emails processed: {self.stats['emails_processed']}")
         print(f"{Fore.GREEN}* Bookings parsed: {self.stats['bookings_parsed']}")
         print(f"{Fore.BLUE}* New bookings: {self.stats['new_bookings']}")
+        print(f"{Fore.BLUE}* Updated bookings: {self.stats['updated_bookings']}")
         print(f"{Fore.YELLOW}! Duplicate bookings: {self.stats['duplicate_bookings']}")
         # print(f"{Fore.RED}X Errors: {self.stats['errors']}")
         

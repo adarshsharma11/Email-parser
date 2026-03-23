@@ -20,6 +20,7 @@ class BookingStatus(str, Enum):
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
     PENDING = "pending"
+    PAID = "paid"
 
 
 class APIResponse(BaseModel):
@@ -128,6 +129,7 @@ class CreateBookingRequest(BaseModel):
     check_out_date: datetime = Field(..., description="Check-out date")
     property_id: Optional[str] = Field(None, description="Property ID")
     property_name: Optional[str] = Field(None, description="Property name")
+    status: Optional[BookingStatus] = Field(BookingStatus.PENDING, description="Booking status")
     nights: Optional[int] = Field(None, description="Number of nights")
     number_of_guests: Optional[int] = Field(None, description="Number of guests")
     total_amount: Optional[float] = Field(None, description="Total amount")

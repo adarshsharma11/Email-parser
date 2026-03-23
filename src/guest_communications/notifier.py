@@ -18,19 +18,26 @@ class Notifier:
         try:
             subject = f"Your Booking is Confirmed! 🏠 {booking.property_name}"
             
+            # Format dates and append fixed times
+            check_in_str = booking.check_in_date.strftime('%Y-%m-%d') if hasattr(booking.check_in_date, 'strftime') else str(booking.check_in_date)
+            check_out_str = booking.check_out_date.strftime('%Y-%m-%d') if hasattr(booking.check_out_date, 'strftime') else str(booking.check_out_date)
+            
+            check_in_display = f"{check_in_str} at 11:00 AM"
+            check_out_display = f"{check_out_str} at 3:00 PM"
+
             # Use beautiful SendGrid template
             email_body = EmailTemplates.get_welcome_template(
                 guest_name=booking.guest_name,
                 property_name=booking.property_name or "Your Property",
-                check_in=str(booking.check_in_date),
-                check_out=str(booking.check_out_date),
+                check_in=check_in_display,
+                check_out=check_out_display,
                 reservation_id=booking.reservation_id
             )
 
             sms_body = (
                 f"Hi {booking.guest_name}, your booking at {booking.property_name} "
-                f"is confirmed! Check-in {booking.check_in_date}, "
-                f"Checkout {booking.check_out_date}. Visit our site for details."
+                f"is confirmed! Check-in {check_in_display}, "
+                f"Checkout {check_out_display}. Visit our site for details."
             )
 
             email_sent = False
@@ -63,11 +70,18 @@ class Notifier:
 
     def send_welcome_whatsapp(self, booking: BookingData) -> bool:
         try:
+            # Format dates and append fixed times
+            check_in_str = booking.check_in_date.strftime('%Y-%m-%d') if hasattr(booking.check_in_date, 'strftime') else str(booking.check_in_date)
+            check_out_str = booking.check_out_date.strftime('%Y-%m-%d') if hasattr(booking.check_out_date, 'strftime') else str(booking.check_out_date)
+            
+            check_in_display = f"{check_in_str} at 11:00 AM"
+            check_out_display = f"{check_out_str} at 3:00 PM"
+
             body = (
                 f"Hi {booking.guest_name} 👋\n\n"
                 f"Your booking at *{booking.property_name}* is confirmed! 🎉\n\n"
-                f"🛎 *Check-in:* {booking.check_in_date}\n"
-                f"🚪 *Check-out:* {booking.check_out_date}\n\n"
+                f"🛎 *Check-in:* {check_in_display}\n"
+                f"🚪 *Check-out:* {check_out_display}\n\n"
                 f"If you need anything before your stay, just reply to this message.\n"
                 f"We look forward to hosting you! 😊"
             )
@@ -121,10 +135,17 @@ class Notifier:
                     
                     guest_details_str = ""
                     if booking:
+                        # Format dates and append fixed times
+                        check_in_str = booking.check_in_date.strftime('%Y-%m-%d') if hasattr(booking.check_in_date, 'strftime') else str(booking.check_in_date)
+                        check_out_str = booking.check_out_date.strftime('%Y-%m-%d') if hasattr(booking.check_out_date, 'strftime') else str(booking.check_out_date)
+                        
+                        check_in_display = f"{check_in_str} at 11:00 AM"
+                        check_out_display = f"{check_out_str} at 3:00 PM"
+
                         guest_details_str = f"""
                         <strong>Guest:</strong> {booking.guest_name}<br/>
-                        <strong>Check-in:</strong> {booking.check_in_date}<br/>
-                        <strong>Check-out:</strong> {booking.check_out_date}<br/>
+                        <strong>Check-in:</strong> {check_in_display}<br/>
+                        <strong>Check-out:</strong> {check_out_display}<br/>
                         """
 
                     # Using SendGrid template

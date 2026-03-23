@@ -309,9 +309,30 @@ class BookingParser:
 
         # ---- SUBJECT LINE EXTRACTION ----
         if email_data.platform == Platform.VRBO:
-            match = re.search(r'Vrbo\s*#(\d+)', subject, re.IGNORECASE)
-            if match:
-                extracted_data['reservation_id'] = match.group(1)
+            # Look for reservation ID in body first as it's more reliable
+            # Vrbo reservation IDs are often alphanumeric like HA-XXXXXX or 10+ digits
+            body_res_patterns = [
+                r'(?:Reservation|Confirmation|Booking)\s*(?:ID|#|number)?[:\s]*([A-Z0-9\-]{7,20})',
+                r'Ref\s*#?\s*([A-Z0-9\-]{7,20})',
+            ]
+            for p in body_res_patterns:
+                m = re.search(p, content, re.IGNORECASE)
+                if m:
+                    res_id = m.group(1).strip()
+                    # Skip if it's just the property ID (usually 7 digits)
+                    if res_id != extracted_data.get('property_id'):
+                        extracted_data['reservation_id'] = res_id
+                        break
+
+            # Fallback to subject if not found in body or body found property ID
+            if not extracted_data.get('reservation_id'):
+                # Subject often has "Vrbo #1234567" where # is property ID
+                # but sometimes it has the actual reservation ID
+                match = re.search(r'Vrbo\s*#([A-Z0-9\-]{7,20})', subject, re.IGNORECASE)
+                if match:
+                    res_id = match.group(1)
+                    if res_id != extracted_data.get('property_id'):
+                        extracted_data['reservation_id'] = res_id
 
             # Try to extract property name from various Vrbo subject patterns
             # 1. "Reservation Confirmation: [Property Name]"
