@@ -675,21 +675,21 @@ class BookingService:
             if status and status != 'all':
                  # Map frontend status filter to database logic
                  if status == 'confirmed':
-                     # Confirmed = explicitly confirmed OR has payment
-                     where_clauses.append("(LOWER(status) = 'confirmed' OR (COALESCE(total_amount, 0) > 0 AND COALESCE(LOWER(status), '') != 'cancelled'))")
+                     # Confirmed = explicitly confirmed OR has payment (and not cancelled/failed)
+                     where_clauses.append("(COALESCE(LOWER(TRIM(status)), '') = 'confirmed' OR (COALESCE(total_amount, 0) > 0 AND COALESCE(LOWER(TRIM(status)), '') NOT IN ('cancelled', 'failed')))")
                  elif status == 'paid':
-                     # Explicitly paid bookings
+                     # Explicitly paid bookings or anything with amount
                      where_clauses.append("COALESCE(total_amount, 0) > 0")
                  elif status == 'failed':
-                     where_clauses.append("LOWER(status) = 'failed'")
+                     where_clauses.append("LOWER(TRIM(status)) = 'failed'")
                  elif status == 'cancelled':
-                     where_clauses.append("LOWER(status) = 'cancelled'")
+                     where_clauses.append("LOWER(TRIM(status)) = 'cancelled'")
                  elif status == 'pending':
-                     # Pending = (status is NULL OR 'pending' OR NOT IN confirmed/cancelled/failed/paid)
-                     # AND MUST NOT have payment (if it has payment, it is confirmed/paid)
-                     where_clauses.append("(COALESCE(LOWER(status), 'pending') NOT IN ('confirmed', 'cancelled', 'failed', 'paid')) AND (COALESCE(total_amount, 0) <= 0)")
+                     # Pending = explicitly pending OR (status is null/empty AND no payment)
+                     # BUT MUST NOT have payment (if it has payment, it is confirmed/paid)
+                     where_clauses.append("(COALESCE(LOWER(TRIM(status)), 'pending') = 'pending') AND (COALESCE(total_amount, 0) <= 0)")
                  else:
-                     where_clauses.append("LOWER(status) = LOWER(:status_val)")
+                     where_clauses.append("LOWER(TRIM(status)) = LOWER(TRIM(:status_val))")
                      params["status_val"] = status
 
             if search:
@@ -769,17 +769,18 @@ class BookingService:
 
                 # Fix status column for consistent display
                 db_status_raw = b_dict.get('status')
-                db_status = db_status_raw.lower() if db_status_raw else None
+                db_status = db_status_raw.strip().lower() if db_status_raw else 'pending'
                 amount = b_dict.get('total_amount') or 0
                 
                 if db_status == 'cancelled':
                     b_dict['status'] = 'cancelled'
-                elif amount > 0:
-                    # Anything with payment is at least "confirmed" (or "paid")
-                    b_dict['status'] = 'confirmed' if db_status != 'paid' else 'paid'
-                elif db_status in ['confirmed', 'paid', 'failed']:
-                    # Explicit statuses without payment (if possible)
-                    b_dict['status'] = db_status
+                elif db_status == 'confirmed' or amount > 0:
+                    # Anything with payment is at least "confirmed"
+                    b_dict['status'] = 'confirmed'
+                elif db_status == 'paid':
+                    b_dict['status'] = 'paid'
+                elif db_status == 'failed':
+                    b_dict['status'] = 'failed'
                 else:
                     # Default to pending if no payment and no explicit higher status
                     b_dict['status'] = 'pending'
