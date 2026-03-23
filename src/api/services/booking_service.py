@@ -676,20 +676,20 @@ class BookingService:
                  # Map frontend status filter to database logic
                  if status == 'confirmed':
                      # Confirmed = explicitly confirmed OR has payment
-                     where_clauses.append("(status = 'confirmed' OR (total_amount > 0 AND status != 'cancelled'))")
+                     where_clauses.append("(LOWER(status) = 'confirmed' OR (COALESCE(total_amount, 0) > 0 AND COALESCE(LOWER(status), '') != 'cancelled'))")
                  elif status == 'paid':
                      # Explicitly paid bookings
-                     where_clauses.append("total_amount > 0")
+                     where_clauses.append("COALESCE(total_amount, 0) > 0")
                  elif status == 'failed':
-                     where_clauses.append("status = 'failed'")
+                     where_clauses.append("LOWER(status) = 'failed'")
                  elif status == 'cancelled':
-                     where_clauses.append("status = 'cancelled'")
+                     where_clauses.append("LOWER(status) = 'cancelled'")
                  elif status == 'pending':
-                     # Pending = explicitly pending OR (no status AND no payment)
-                     # BUT MUST NOT have payment (if it has payment, it is confirmed/paid)
-                     where_clauses.append("(status = 'pending' OR (status NOT IN ('confirmed', 'cancelled', 'failed') AND (total_amount IS NULL OR total_amount <= 0))) AND (total_amount IS NULL OR total_amount <= 0)")
+                     # Pending = (status is NULL OR 'pending' OR NOT IN confirmed/cancelled/failed/paid)
+                     # AND MUST NOT have payment (if it has payment, it is confirmed/paid)
+                     where_clauses.append("(COALESCE(LOWER(status), 'pending') NOT IN ('confirmed', 'cancelled', 'failed', 'paid')) AND (COALESCE(total_amount, 0) <= 0)")
                  else:
-                     where_clauses.append("status = :status_val")
+                     where_clauses.append("LOWER(status) = LOWER(:status_val)")
                      params["status_val"] = status
 
             if search:
@@ -768,7 +768,8 @@ class BookingService:
                         b_dict['payment_status'] = 'Pending'
 
                 # Fix status column for consistent display
-                db_status = b_dict.get('status')
+                db_status_raw = b_dict.get('status')
+                db_status = db_status_raw.lower() if db_status_raw else None
                 amount = b_dict.get('total_amount') or 0
                 
                 if db_status == 'cancelled':
