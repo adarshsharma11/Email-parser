@@ -8,7 +8,7 @@ from config.settings import app_config
 
 logger = logging.getLogger(__name__)
 
-# ✅ Handle SSL certificate verification issue (common on macOS)
+# Handle SSL certificate verification issue (common on macOS)
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -32,7 +32,7 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
             html_content=content
         )
 
-        # ✅ PDF attach if provided
+        # PDF attach if provided
         if pdf_bytes:
             encoded_file = base64.b64encode(pdf_bytes).decode()
 
@@ -49,10 +49,10 @@ def send_email_with_pdf(to_email: str, subject: str, content: str, pdf_bytes: by
         sg = SendGridAPIClient(app_config.SENDGRID_API_KEY)
         response = sg.send(message)
 
-        logger.info(f"✅ Email sent to {to_email} | Status: {response.status_code} | File: {filename}")
+        logger.info(f" Email sent to {to_email} | Status: {response.status_code} | File: {filename}")
 
     except Exception as e:
-        logger.error(f"❌ SendGrid Error for {to_email}: {str(e)}")
+        logger.error(f" SendGrid Error for {to_email}: {str(e)}")
         raise
 
 
