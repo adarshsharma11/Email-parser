@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, List
 from pydantic import BaseModel
 
@@ -45,13 +45,15 @@ async def get_rules(
     description="Get the execution logs of automation rules"
 )
 async def get_automation_logs(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Number of logs per page"),
     service: AutomationService = Depends(get_automation_service)
 ):
-    logs = await service.get_logs()
+    data = await service.get_logs(page=page, limit=limit)
     return {
         "success": True,
         "message": "Automation logs retrieved successfully",
-        "data": logs
+        "data": data
     }
 
 @router.post(

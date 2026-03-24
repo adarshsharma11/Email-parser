@@ -41,6 +41,6 @@ class AutomationService:
         """Log the execution of a rule."""
         await self.activity_rule_service.log_activity(rule_name, outcome)
 
-    async def get_logs(self):
+    async def get_logs(self, page: int = 1, limit: int = 10):
         """Get execution logs."""
-        return await self.activity_rule_service.get_logs()
+        return await self.activity_rule_service.get_logs(page=page, limit=limit)

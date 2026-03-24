@@ -60,13 +60,32 @@ class ActivityRuleService:
         except Exception as e:
             self.logger.error("Error logging activity rule execution", error=str(e))
 
-    async def get_logs(self) -> List[ActivityRuleLog]:
-        """Get all activity rule logs."""
+    async def get_logs(self, page: int = 1, limit: int = 10) -> Dict[str, Any]:
+        """Get paginated activity rule logs."""
         try:
-            query = text(f"SELECT * FROM {self.log_table_name} ORDER BY created_at DESC")
-            result = await self.session.execute(query)
+            offset = (page - 1) * limit
+            
+            # Count total logs
+            count_query = text(f"SELECT COUNT(*) FROM {self.log_table_name}")
+            count_result = await self.session.execute(count_query)
+            total_count = count_result.scalar() or 0
+            
+            # Get paginated logs
+            query = text(f"SELECT * FROM {self.log_table_name} ORDER BY created_at DESC LIMIT :limit OFFSET :offset")
+            result = await self.session.execute(query, {"limit": limit, "offset": offset})
             rows = result.fetchall()
-            return [ActivityRuleLog(**dict(row._mapping)) for row in rows]
+            
+            logs = [ActivityRuleLog(**dict(row._mapping)) for row in rows]
+            
+            return {
+                "logs": logs,
+                "pagination": {
+                    "total": total_count,
+                    "page": page,
+                    "limit": limit,
+                    "total_pages": (total_count + limit - 1) // limit
+                }
+            }
         except Exception as e:
             self.logger.error("Error fetching activity rule logs", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
