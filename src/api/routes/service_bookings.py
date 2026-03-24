@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from sqlalchemy import text
-from ..dependencies import psql_client, get_logger
+from ..dependencies import psql_client, get_logger, get_booking_service
+from ..services.booking_service import BookingService
+from pydantic import BaseModel
 import logging
 import asyncio
 import json
@@ -11,6 +13,45 @@ import time
 
 router = APIRouter(prefix="/service-bookings", tags=["service-bookings"])
 logger = logging.getLogger(__name__)
+
+class AddServiceRequest(BaseModel):
+    reservation_id: str
+    type: str # 'cleaning' or 'service'
+    service_id: Optional[int] = None
+    service_date: str
+    service_time: Optional[str] = "10:00"
+
+@router.post("")
+async def add_service_to_booking(
+    request: AddServiceRequest,
+    booking_service: BookingService = Depends(get_booking_service)
+):
+    """
+    Add a service or cleaning task to an existing booking.
+    """
+    if request.type == "cleaning":
+        return StreamingResponse(
+            booking_service.add_cleaning_task_process(
+                reservation_id=request.reservation_id,
+                scheduled_date=request.service_date
+            ),
+            media_type="application/x-ndjson"
+        )
+    elif request.type == "service":
+        if not request.service_id:
+            raise HTTPException(status_code=400, detail="service_id is required for service type")
+            
+        return StreamingResponse(
+            booking_service.add_service_to_booking_process(
+                reservation_id=request.reservation_id,
+                service_id=request.service_id,
+                service_date=request.service_date,
+                service_time=request.service_time
+            ),
+            media_type="application/x-ndjson"
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid task type. Use 'cleaning' or 'service'.")
 
 @router.get("/respond")
 async def respond_to_task(

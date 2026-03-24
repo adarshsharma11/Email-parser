@@ -430,13 +430,13 @@ class BookingService:
                     if isinstance(service_time, str):
                         try:
                             # Try HH:MM format
-                            parsed_dt = datetime.strptime(service_time, "%H:%M")
+                            parsed_dt = dt_mod.datetime.strptime(service_time, "%H:%M")
                             # Make it timezone-aware (UTC) since the DB column expects it
                             service_time = parsed_dt.time().replace(tzinfo=dt_mod.timezone.utc)
                         except ValueError:
                             try:
                                 # Try HH:MM:SS format
-                                parsed_dt = datetime.strptime(service_time, "%H:%M:%S")
+                                parsed_dt = dt_mod.datetime.strptime(service_time, "%H:%M:%S")
                                 service_time = parsed_dt.time().replace(tzinfo=dt_mod.timezone.utc)
                             except ValueError:
                                 # Fallback to original if parsing fails
@@ -445,57 +445,34 @@ class BookingService:
                         # If it's already a time object but naive, make it aware
                         service_time = service_time.replace(tzinfo=dt_mod.timezone.utc)
 
-                    # The booking_service table type for booking_id is inconsistent between environments:
-                    # - Live server: BIGINT (requires int)
-                    # - Local server: TEXT (requires str)
-                    # We use a robust approach to handle both.
-                    booking_id_val = booking_record.get("id") or request.reservation_id
+                    # Use reservation_id as the link (booking_id column is now text)
+                    booking_id_val = request.reservation_id
                     
-                    # We try to use the most likely type (int for numeric IDs, str for others)
-                    # but we will retry if the database complains about the type mismatch.
-                    async def execute_insert(val):
-                        s_dict = {
-                            "booking_id": val,
-                            "service_id": svc.service_id,
-                            "service_date": svc.service_date.date() if hasattr(svc.service_date, "date") else svc.service_date,
-                            "time": service_time
-                        }
-                        s_query = text("""
-                            INSERT INTO booking_service (booking_id, service_id, service_date, time)
-                            VALUES (:booking_id, :service_id, :service_date, :time)
-                            RETURNING *
-                        """)
-                        res = await self.session.execute(s_query, s_dict)
-                        row = res.fetchone()
-                        if row:
-                            service_records.append(dict(row._mapping))
-
-                    try:
-                        # Try as an integer first if it looks numeric (likely for live server BIGINT)
+                    # Handle date parsing
+                    s_date = svc.service_date
+                    if isinstance(s_date, str):
                         try:
-                            val_to_try = int(booking_id_val)
-                        except (ValueError, TypeError):
-                            val_to_try = str(booking_id_val)
-                        
-                        # Start a nested transaction (savepoint) for the retry logic
-                        async with self.session.begin_nested():
-                            await execute_insert(val_to_try)
-                    except Exception as e:
-                        # If it failed due to a type mismatch, try the other type
-                        error_str = str(e).lower()
-                        if "expected str" in error_str or "expected int" in error_str or "invalid input" in error_str:
-                            self.logger.info(f"Retrying booking_service insert with alternate type due to: {e}")
-                            # Try the alternate type (str if we tried int, and vice versa)
-                            try:
-                                if isinstance(val_to_try, int):
-                                    await execute_insert(str(booking_id_val))
-                                else:
-                                    await execute_insert(int(booking_id_val))
-                            except Exception as retry_err:
-                                self.logger.error(f"Retry also failed: {retry_err}")
-                                raise retry_err
-                        else:
-                            raise e
+                            s_date_obj = dt_mod.datetime.strptime(s_date, "%Y-%m-%d").date()
+                        except ValueError:
+                            s_date_obj = dt_mod.datetime.fromisoformat(s_date).date()
+                    else:
+                        s_date_obj = s_date.date() if hasattr(s_date, "date") else s_date
+
+                    s_dict = {
+                        "booking_id": booking_id_val,
+                        "service_id": svc.service_id,
+                        "service_date": s_date_obj,
+                        "time": service_time
+                    }
+                    s_query = text("""
+                        INSERT INTO booking_service (booking_id, service_id, service_date, time)
+                        VALUES (:booking_id, :service_id, :service_date, :time)
+                        RETURNING *
+                    """)
+                    res = await self.session.execute(s_query, s_dict)
+                    row = res.fetchone()
+                    if row:
+                        service_records.append(dict(row._mapping))
             
             booking_record["services"] = service_records
             return CreateBookingResponse(
@@ -634,10 +611,23 @@ class BookingService:
             # Ensure reservation_id is passed as a string (the column type is text)
             res_id_val = str(booking_id)
 
+            # Handle date parsing if string
+            from datetime import datetime
+            scheduled_date_obj = scheduled_date
+            if isinstance(scheduled_date, str):
+                try:
+                    # Try common formats
+                    if 'T' in scheduled_date:
+                        scheduled_date_obj = datetime.fromisoformat(scheduled_date.replace('Z', ''))
+                    else:
+                        scheduled_date_obj = datetime.strptime(scheduled_date, "%Y-%m-%d")
+                except ValueError:
+                    pass
+
             payload = {
                 "reservation_id": res_id_val,
                 "property_id": property_id,
-                "scheduled_date": scheduled_date,
+                "scheduled_date": scheduled_date_obj,
                 "crew_id": crew_id,
                 "category_id": category_id
             }
@@ -866,43 +856,311 @@ class BookingService:
             return False
 
 
-    async def delete_booking(self, reservation_id: str):
+    async def delete_booking(self, reservation_id: str) -> Dict[str, Any]:
+        """Delete booking and all related entities"""
         try:
-            logger.info(f"Deleting booking {reservation_id}")
-
-            # Check if booking exists
-            query = """
-                SELECT reservation_id FROM bookings
-                WHERE reservation_id = :reservation_id
-            """
-            result = await self.session.execute(text(query), {"reservation_id": reservation_id})
-            booking = result.fetchone()
-
-            if not booking:
-                return {
-                    "success": False,
-                    "message": "Booking not found"
-                }
-
-            # Delete booking
-            delete_query = """
-                DELETE FROM bookings
-                WHERE reservation_id = :reservation_id
-            """
-            await self.session.execute(text(delete_query), {"reservation_id": reservation_id})
+            # 1. Delete cleaning tasks
+            await self.session.execute(
+                text("DELETE FROM cleaning_tasks WHERE reservation_id = :rid"),
+                {"rid": reservation_id}
+            )
+            
+            # 2. Delete booking services
+            await self.session.execute(
+                text("DELETE FROM booking_service WHERE booking_id = :rid OR booking_id IN (SELECT id::text FROM bookings WHERE reservation_id = :rid)"),
+                {"rid": reservation_id}
+            )
+            
+            # 3. Delete booking
+            result = await self.session.execute(
+                text("DELETE FROM bookings WHERE reservation_id = :rid RETURNING *"),
+                {"rid": reservation_id}
+            )
+            
             await self.session.commit()
+            
+            if result.rowcount > 0:
+                return {"success": True, "message": f"Booking {reservation_id} deleted successfully"}
+            else:
+                return {"success": False, "message": f"Booking {reservation_id} not found"}
+                
+        except Exception as e:
+            self.logger.error(f"Error deleting booking {reservation_id}: {e}")
+            await self.session.rollback()
+            return {"success": False, "message": str(e)}
 
-            return {
-                "success": True,
-                "message": f"Booking {reservation_id} deleted successfully"
-            }
+    async def add_service_to_booking_process(self, reservation_id: str, service_id: int, service_date: str, service_time: str) -> AsyncGenerator[str, None]:
+        """
+        Add a single service to an existing booking and send notifications.
+        Used when adding a task/service from the calendar.
+        """
+        try:
+            notifier = await self._get_notifier()
+            
+            # 1. Fetch the existing booking
+            yield json.dumps({
+                "step": "database",
+                "status": "in_progress",
+                "message": f"Fetching booking {reservation_id}..."
+            }, default=str) + "\n"
+            
+            query = text("SELECT * FROM bookings WHERE reservation_id = :rid")
+            result = await self.session.execute(query, {"rid": reservation_id})
+            booking_row = result.fetchone()
+            
+            if not booking_row:
+                yield json.dumps({
+                    "step": "database",
+                    "status": "failed",
+                    "message": f"Booking {reservation_id} not found"
+                }, default=str) + "\n"
+                return
+            
+            booking_record = dict(booking_row._mapping)
+            
+            # 2. Add the service record
+            yield json.dumps({
+                "step": "database",
+                "status": "in_progress",
+                "message": "Adding service record..."
+            }, default=str) + "\n"
+            
+            # Use reservation_id as the link (booking_id column is now text)
+            booking_id_val = reservation_id
+            
+            # Handle date parsing
+            from datetime import datetime
+            if isinstance(service_date, str):
+                try:
+                    service_date_obj = datetime.strptime(service_date, "%Y-%m-%d").date()
+                except ValueError:
+                    service_date_obj = datetime.fromisoformat(service_date).date()
+            else:
+                service_date_obj = service_date
+
+            # Handle time parsing
+            import datetime as dt_mod
+            parsed_time = None
+            try:
+                parsed_time = datetime.strptime(service_time, "%H:%M").time().replace(tzinfo=dt_mod.timezone.utc)
+            except Exception:
+                try:
+                    parsed_time = datetime.strptime(service_time, "%H:%M:%S").time().replace(tzinfo=dt_mod.timezone.utc)
+                except Exception:
+                    parsed_time = dt_mod.time(10, 0, tzinfo=dt_mod.timezone.utc)
+
+            # Insert service record
+            s_query = text("""
+                INSERT INTO booking_service (booking_id, service_id, service_date, time)
+                VALUES (:booking_id, :service_id, :service_date, :time)
+                RETURNING *
+            """)
+            
+            s_res = await self.session.execute(s_query, {
+                "booking_id": booking_id_val,
+                "service_id": service_id,
+                "service_date": service_date_obj,
+                "time": parsed_time
+            })
+            service_row = s_res.fetchone()
+
+            if not service_row:
+                yield json.dumps({
+                    "step": "database",
+                    "status": "failed",
+                    "message": "Failed to create service record"
+                }, default=str) + "\n"
+                return
+
+            service_record = dict(service_row._mapping)
+            await self.session.commit()
+            
+            yield json.dumps({
+                "step": "database",
+                "status": "completed",
+                "message": "Service record added to booking"
+            }, default=str) + "\n"
+            
+            # 3. Notify Service Provider
+            yield json.dumps({
+                "step": "service_notification",
+                "status": "in_progress",
+                "message": "Notifying service provider..."
+            }, default=str) + "\n"
+            
+            service_category = await self.service_category_service.get_category(int(service_id))
+            if service_category:
+                provider = {
+                    "id": service_category.get("id"),
+                    "name": service_category.get("category_name", "Service Provider"),
+                    "email": service_category.get("email"),
+                    "phone": service_category.get("phone")
+                }
+                
+                service_details = {
+                    "id": service_record.get("id"),
+                    "reservation_id": reservation_id,
+                    "service_name": service_category.get("category_name", "Service"),
+                    "service_date": service_date,
+                    "service_time": service_time,
+                    "property_name": booking_record.get("property_name") or "Vacation Rental"
+                }
+                
+                if notifier.notify_service_provider(provider, service_details):
+                    yield json.dumps({
+                        "step": "service_notification",
+                        "status": "completed",
+                        "message": f"Notified {provider['name']} via Email"
+                    }, default=str) + "\n"
+                else:
+                    yield json.dumps({
+                        "step": "service_notification",
+                        "status": "failed",
+                        "message": "Failed to send provider notification"
+                    }, default=str) + "\n"
+            else:
+                yield json.dumps({
+                    "step": "service_notification",
+                    "status": "skipped",
+                    "message": "Service category not found"
+                }, default=str) + "\n"
+
+            # 4. Notify Guest (Optional, can be added if needed)
+            # For now, just finish
+            
+            yield json.dumps({
+                "step": "complete",
+                "status": "success",
+                "message": "Service added and provider notified successfully"
+            }, default=str) + "\n"
 
         except Exception as e:
-            await self.session.rollback()
-            logger.error(f"Delete booking failed: {str(e)}")
+            self.logger.error(f"Failed to add service to booking: {e}", exc_info=True)
+            yield json.dumps({
+                "step": "process",
+                "status": "error",
+                "message": f"Critical error: {str(e)}"
+            }, default=str) + "\n"
 
-            return {
-                "success": False,
-                "message": "Delete booking failed",
-                "error": str(e)
+    async def add_cleaning_task_process(self, reservation_id: str, scheduled_date: str) -> AsyncGenerator[str, None]:
+        """
+        Add a cleaning task to an existing booking and notify crew.
+        Used when adding a task/service from the calendar.
+        """
+        try:
+            notifier = await self._get_notifier()
+            
+            # 1. Fetch the existing booking
+            yield json.dumps({
+                "step": "database",
+                "status": "in_progress",
+                "message": f"Fetching booking {reservation_id}..."
+            }, default=str) + "\n"
+            
+            query = text("SELECT * FROM bookings WHERE reservation_id = :rid")
+            result = await self.session.execute(query, {"rid": reservation_id})
+            booking_row = result.fetchone()
+            
+            if not booking_row:
+                yield json.dumps({
+                    "step": "database",
+                    "status": "failed",
+                    "message": f"Booking {reservation_id} not found"
+                }, default=str) + "\n"
+                return
+            
+            booking_record = dict(booking_row._mapping)
+            
+            # 2. Add cleaning task
+            yield json.dumps({
+                "step": "database",
+                "status": "in_progress",
+                "message": "Adding cleaning task..."
+            }, default=str) + "\n"
+            
+            crews = await self.crew_service.get_active_crews(role="Cleaning")
+            if not crews:
+                yield json.dumps({
+                    "step": "database",
+                    "status": "failed",
+                    "message": "No active cleaning crew found"
+                }, default=str) + "\n"
+                return
+            
+            crew = crews[0]
+            task = await self.create_cleaning_task(
+                booking_id=reservation_id,
+                property_id=booking_record.get("property_name") or booking_record.get("property_id") or "Unknown",
+                scheduled_date=scheduled_date,
+                crew_id=crew.get("id"),
+                category_id=crew.get("category_id")
+            )
+            
+            if not task:
+                yield json.dumps({
+                    "step": "database",
+                    "status": "failed",
+                    "message": "Failed to create cleaning task record"
+                }, default=str) + "\n"
+                return
+            
+            await self.session.commit()
+            
+            yield json.dumps({
+                "step": "database",
+                "status": "completed",
+                "message": "Cleaning task added to booking"
+            }, default=str) + "\n"
+            
+            # 3. Notify Crew
+            yield json.dumps({
+                "step": "crew_notification",
+                "status": "in_progress",
+                "message": "Notifying cleaning crew..."
+            }, default=str) + "\n"
+            
+            booking_data = BookingData(
+                reservation_id=booking_record['reservation_id'],
+                platform=Platform(booking_record['platform']),
+                guest_name=booking_record.get('guest_name') or 'Guest',
+                guest_email=booking_record.get('guest_email'),
+                guest_phone=booking_record.get('guest_phone'),
+                check_in_date=booking_record.get('check_in_date'),
+                check_out_date=booking_record.get('check_out_date'),
+                property_name=booking_record.get('property_name') or 'Your Property',
+                property_id=booking_record.get('property_id')
+            )
+            
+            task_for_notify = {
+                "id": task.get("id"),
+                "booking_id": reservation_id,
+                "property_id": booking_record.get("property_name") or "Unknown",
+                "scheduled_date": scheduled_date
             }
+            
+            if notifier.notify_cleaning_task(crew, task_for_notify, booking_data):
+                yield json.dumps({
+                    "step": "crew_notification",
+                    "status": "completed",
+                    "message": f"Notified {crew['name']} via Email"
+                }, default=str) + "\n"
+            else:
+                yield json.dumps({
+                    "step": "crew_notification",
+                    "status": "failed",
+                    "message": "Failed to send crew notification"
+                }, default=str) + "\n"
+                
+            yield json.dumps({
+                "step": "complete",
+                "status": "success",
+                "message": "Cleaning task added and crew notified successfully"
+            }, default=str) + "\n"
+
+        except Exception as e:
+            self.logger.error(f"Failed to add cleaning task: {e}", exc_info=True)
+            yield json.dumps({
+                "step": "process",
+                "status": "error",
+                "message": f"Critical error: {str(e)}"
+            }, default=str) + "\n"
