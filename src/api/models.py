@@ -333,7 +333,7 @@ class ActivityRuleLog(BaseModel):
 
 class ActivityRuleLogListResponse(APIResponse):
     """Response model for list of activity rule logs."""
-    data: List[ActivityRuleLog] = Field(..., description="List of activity rule logs")
+    data: Dict[str, Any] = Field(..., description="Paginated activity rule logs including logs array and pagination metadata")
 
 
 # Pricing Models
