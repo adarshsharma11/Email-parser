@@ -994,37 +994,54 @@ def generate_pdf_report(title: str, data: dict) -> bytes:
 
 # Add this function to report_pdf.py (if not already present)
 
+# Add this at the end of report_pdf.py if not present, or update existing
 def get_report_filename(report_type: str, period_start: str = None, period_end: str = None) -> str:
     """
     Generate proper filename based on report type
     
     Args:
-        report_type: Type of report (e.g., "Booking Summary", "Performance Comparison")
+        report_type: Type of report (e.g., "Booking Summary", "Performance Comparison", "Owner Statement")
         period_start: Start date for the report (format: YYYY-MM-DD)
         period_end: End date for the report (format: YYYY-MM-DD)
     
     Returns:
-        Proper filename like "booking_summary_2026-02-01_to_2026-02-28.pdf"
+        Proper filename like "owner_statement_2026-03-10_to_2026-03-23.pdf"
     """
     # Convert report type to filename format
     filename_map = {
         "Booking Summary": "booking_summary",
-        "Owner Statement": "owner_statement",
-        "Occupancy Report": "occupancy_report",
-        "Service Revenue": "service_revenue",
-        "Service Provider": "service_provider",
-        "Performance Comparison": "performance_comparison",
         "Booking Summary Report": "booking_summary",
+        "Owner Statement": "owner_statement",
         "Owner Statement Report": "owner_statement",
         "Occupancy Report": "occupancy_report",
+        "Service Revenue": "service_revenue",
         "Service Revenue Report": "service_revenue",
+        "Service Provider": "service_provider",
         "Service Provider Report": "service_provider",
+        "Performance Comparison": "performance_comparison",
         "Performance Comparison Report": "performance_comparison",
     }
     
-    # Clean up report type
+    # Clean up report type - remove any extra spaces
     clean_type = report_type.strip()
-    base_name = filename_map.get(clean_type, "report")
+    base_name = filename_map.get(clean_type)
+    
+    # If not found, try to extract from title
+    if not base_name:
+        if "owner" in clean_type.lower():
+            base_name = "owner_statement"
+        elif "booking" in clean_type.lower():
+            base_name = "booking_summary"
+        elif "occupancy" in clean_type.lower():
+            base_name = "occupancy_report"
+        elif "service revenue" in clean_type.lower():
+            base_name = "service_revenue"
+        elif "service provider" in clean_type.lower():
+            base_name = "service_provider"
+        elif "performance" in clean_type.lower():
+            base_name = "performance_comparison"
+        else:
+            base_name = "report"
     
     # Add date range if available
     if period_start and period_end:
